@@ -279,9 +279,9 @@ def no_3d_samplers_on_psp2(text):
 
 
 # Linear fog. The decompiler writes the fog keyword as a shader_feature, so a build keeps the FOG_LINEAR
-# variant only where a material has the keyword on, which no material does: SFB/UnlitVertColourAlpha,
-# Unlit/TransparentColor, the legacy particles and ProBuilder's Standard Vertex Color drew with no fog on
-# every platform (the game's own build has the variant). FOG_LINEAR is a global keyword that Unity sets
+# variant only where a material has the keyword on, which no material does: such a shader would draw
+# with no fog on every platform (the game's own build has the variant). Huntdown's shaders have none,
+# but the rule stays with the decompiler's other fixes. FOG_LINEAR is a global keyword that Unity sets
 # from the scene's fog, so it becomes a multi_compile (the build still strips it where no scene uses linear
 # fog). The fog coordinate came out as DX11 computes it from the clip-space z (reversed z: from near at
 # the near plane to 0 at the far one): (1 - z / near) * far. On the PS Vita the clip-space z runs from
@@ -290,7 +290,7 @@ def no_3d_samplers_on_psp2(text):
 # UNITY_Z_0_FAR_FROM_CLIPSPACE (copied, as these programs don't include UnityCG.cginc), so the next three
 # lines of the program, 1 - x, times far and max(x, 0), end at Unity's fog coordinate for the platform:
 # the same value as before on Direct3D, the clip-space z on the PS Vita and OpenGL (as Unity's own shaders
-# and HuntVita/Lit have it, which compat/Cameras.cs's NearPlane counts on).
+# have it).
 FOG_FEATURE = re.compile(r'^([ \t]*)#pragma shader_feature FOG_LINEAR[ \t]*$', re.MULTILINE)
 FOG_COORDINATE = re.compile(r'^([ \t]*)(\w+\.[xyzw]) = ([\w.]+) / _ProjectionParams\.y;$')
 FOG_DEPTH = """#ifndef HUNT_Z_0_FAR_FROM_CLIPSPACE
@@ -341,43 +341,6 @@ def linear_fog(name, text):
     return for_each_program(text, program), features, rewritten
 
 
-# Instructions the decompiler lost, per shader: (the decompiled text, with the instruction restored).
-# - SFB/CC02RedDitherPoster's fragment program indexes a 4x4 ordered dither table by
-#   (row << 2 & 12) + (column & 3), from texcoord1, the vertex program's uv times the source size
-#   in texels (which nothing else reads). The float-to-uint conversion of texcoord1 that fills tmp0
-#   came out missing, so tmp0 was read uninitialized (DX11's compiler rejects it; psp2cgc compiled
-#   garbage dither). Row y, column x: if the original took them the other way, the pattern is
-#   transposed, which an ordered dither shows the same.
-DECOMPILER_FIXES = {
-    'SFB/CC02RedDitherPoster': [
-        (
-            '                tmp0.x = float1(int1(tmp0.x) << 2);\n',
-            '                tmp0.xy = floor(inp.texcoord1.yx);\n                tmp0.x = float1(int1(tmp0.x) << 2);\n',
-        )
-    ]
-}
-
-
-# Vertex inputs the target lays out differently, per shader: (the decompiled text, the target's).
-# - Unlit/UIPixelate snaps its image to the screen's 416x234 grid (com.sfbgames UIPixelate): the
-#   grid's offset in uv1.xy, the image's size in grid cells in uv1.zw, a Vector4 uv1 SFB's uGUI has.
-#   2018.2's UIVertex.uv1 is a Vector2, so HuntCompat's VertexHelper.SetUV1 puts zw in uv2
-#   (compat/ApiShims.cs), which the canvases pass (asset_rules.canvas_channel_overlay). Unread, zw
-#   were 0 and the shader drew the image unsnapped.
-VERTEX_INPUT_FIXES = {
-    'Unlit/UIPixelate': [
-        (
-            '                float4 texcoord1 : TEXCOORD1;\n            };\n            struct v2f\n',
-            (
-                '                float4 texcoord1 : TEXCOORD1;\n                float2 texcoord2 : TEXCOORD2;\n'
-                '            };\n            struct v2f\n'
-            ),
-        ),
-        ('o.texcoord1 = v.texcoord1;', 'o.texcoord1 = float4(v.texcoord1.xy, v.texcoord2.xy);'),
-    ]
-}
-
-
 # dot() of a vector literal wider than the swizzle it is dotted with: the decompiler writes DX11's dp3 with a
 # float4 literal, dot(float4(1.1644, -0.2133, -0.5329, 0.0), tmp2.xyz) (FMVTexture, the logo videos' YUV shader).
 # Windows' HLSL compiler drops the extra component; the PS Vita's shader compiler stops on it ("incompatible
@@ -405,17 +368,9 @@ def narrow_dot_literals(text):
     return DOT_LITERAL.sub(narrow, text), count
 
 
-def fix_decompiler(name, text):
-    for old, new in DECOMPILER_FIXES.get(name, []) + VERTEX_INPUT_FIXES.get(name, []):
-        if text.count(old) != 1:
-            sys.exit(f'{name}: the decompiled text for a DECOMPILER_FIXES or VERTEX_INPUT_FIXES rule is not there once')
-        text = text.replace(old, new)
-    return text
-
-
 def shader_overlay(exported: Path, game: Path, version: str):
     """Replace AssetRipper's dummy shaders with decompiled source, keeping their .meta GUIDs. Shaders
-    with the same name in several files (the Addressables bundle's copies) get the same source."""
+    with the same name in several files get the same source."""
     decompiled = decompile_shaders(game)
     builtins = builtin_uniforms(version)
     conditional = conditional_uniforms(version)
@@ -429,7 +384,7 @@ def shader_overlay(exported: Path, game: Path, version: str):
         if name not in decompiled:
             missing.append(name)
             continue
-        text, features, rewritten = linear_fog(name, fix_decompiler(name, decompiled[name]))
+        text, features, rewritten = linear_fog(name, decompiled[name])
         if features or rewritten:
             fog[name] = f'{name} ({features} programs, {rewritten} fog coordinates)'
         text = mask_logic(strip_builtin_declarations(text, builtins))

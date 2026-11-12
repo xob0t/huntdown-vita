@@ -20,7 +20,6 @@ import argparse
 import ctypes
 import ctypes.wintypes as wt
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -232,51 +231,6 @@ def run(exe: Path, log: Path, arguments, timeout=None, on_start=None):
         muter.kill()
         kernel32.CloseHandle(info.hThread)
         kernel32.CloseHandle(info.hProcess)
-
-
-# Steam's files, left out of every player copy: with them a test player once signed in to the user's
-# Steam account (play time, achievements). The build's Steam wrappers are stubs anyway (pipeline.py's
-# STUBBED_ON).
-STEAM_FILES = ('steam_api', 'steam_appid')
-COPY_SOURCE = 'hunt-copy-source.txt'  # in a copy: the sizes and times of the build files it was made from
-
-
-def player_copy(build: Path, copy: Path, link=True, sources=()):
-    """A copy of the Windows player in build, in copy, without STEAM_FILES; its executable.
-    link: hard links (nothing copied, but a file the build rewrites in place changes in the copy as
-    well), else real copies (a run then never holds the build's files open while pipeline.py rebuilds
-    it). sources: build files (relative paths) whose sizes and times decide when an existing copy
-    is made again; without them it is made again every time."""
-    exe = build / 'Huntdown.exe'
-    if not exe.exists():
-        sys.exit(f'No Windows player in {build}')
-    missing = [name for name in sources if not (build / name).exists()]
-    if missing:
-        sys.exit(f'No {", ".join(missing)} in {build}')
-    stamp = ' '.join(f'{(build / n).stat().st_size}:{(build / n).stat().st_mtime_ns}' for n in sources)
-    marker = copy / COPY_SOURCE
-    if sources and marker.exists() and marker.read_text() == stamp:
-        return copy / exe.name
-    if copy.exists():
-        shutil.rmtree(copy)
-    for source in build.rglob('*'):
-        if source.name.lower().startswith(STEAM_FILES):
-            continue
-        target = copy / source.relative_to(build)
-        if source.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if link:
-            try:
-                os.link(source, target)
-                continue
-            except OSError:
-                pass
-        shutil.copy2(source, target)
-    if sources:
-        marker.write_text(stamp)
-    return copy / exe.name
 
 
 def main():

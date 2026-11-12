@@ -13,7 +13,7 @@ Work in progress. The VPK builds, and on the console the game runs from its open
 ## How it differs from the PC release
 
 - The game's AssetBundles (its levels, area art and sound) are rebuilt for the target by the editor, under the same names.
-- On the PS Vita, short sound clips stay compressed in memory (HEVAG) instead of being decompressed when loaded, and the music streams as MP3.
+- On the PS Vita, sound clips stay compressed in memory as HEVAG, the console's own format, instead of being decompressed when loaded, and the music streams.
 - The pad goes through Rewired's PS Vita controller: R dashes, L does what Left Shoulder 1 does on a PC pad.
 - The two logo videos at start are skipped: the PS Vita's Unity has no video player.
 - Steamworks is replaced with a stub, so no player signs in to Steam.

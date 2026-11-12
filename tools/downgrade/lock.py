@@ -31,7 +31,7 @@ command and everything it starts run in a Windows job that ends with lock.py: if
 (a shell or an agent's tool stopping it), the Unity editor it started doesn't go on building
 unsupervised, and the lock, which names lock.py's process, counts as free once that process is gone
 (take removes it). The command sees HUNT_LOCKS, the names of all the runs it is in, which
-pipeline.py, vita.py and fightbench.py check (held_here, ours: a sync inside `lock.py run vita-build`
+pipeline.py and vita.py check (held_here, ours: a sync inside `lock.py run vita-build`
 is the build's own), and HUNT_LOCK=<name>, the innermost run's, which build.py checks. For example, a
 Windows Mono player (pipeline.py's default platform is the PS Vita, whose stages run the same way
 under vita-build):

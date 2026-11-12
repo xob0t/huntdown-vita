@@ -24,10 +24,10 @@ must have been installed once from the VPK (install, or the VPK in VitaShell); a
   log [--tail N] [--prev [N]]  print the player's log (ux0:data/hunt/log.txt, HuntCompat Diag);
                         --prev the run before's (log.prev.txt), --prev 2 the one before that
   args [flags...]       set the probe's -hunt-* flags for the next launch (none clears; a flag's
-                        value with spaces, such as "Station Square", is quoted in the file)
+                        value with spaces is quoted in the file)
   args --show           print the flags the next launch gets, changing nothing
   files [folder]        list the files under a console folder with their sizes and times (default
-                        the game's saves and settings, ux0:data/HuntCountry, compat/Saves.cs)
+                        the game's saves and settings, ux0:data/Huntdown, compat/Saves.cs)
   crashes [--pull] [--thread NAME]  list crash dumps in ux0:data, newest last; --pull fetches the
                         newest and prints the crashed thread's symbolized call chain
                         (needs the SDK's psp2bin and the build's SymbolFiles; sync, install and
@@ -64,7 +64,7 @@ from common import ARTIFACTS, EXTERNAL, ROOT, TARGET, VITA_HOST, build_folder, e
 
 REMOTE = 'ux0:/data/hunt'  # HuntCompat Diag's folder on the console (args.txt, log.txt)
 ARGS = f'{REMOTE}/args.txt'
-SAVES = 'ux0:/data/HuntCountry'  # the game's saves and persistentDataPath on the console (compat/Saves.cs)
+SAVES = 'ux0:/data/Huntdown'  # the game's saves and persistentDataPath on the console (compat/Saves.cs)
 APP = f'ux0:/app/{pipeline.VITA_TITLE_ID}'
 OUT = ROOT / 'artifacts' / 'vita'  # screenshots, crash dumps, the symbols kept for them
 # What a dropped or stalled FTP session raises (TimeoutError is an OSError).
@@ -77,7 +77,6 @@ CHANGING = ('sync', 'install', 'launch', 'quit', 'run', 'do', 'reboot', 'args')
 WORDS = {'do': None, 'args': None, 'shot': 1, 'files': 1}
 # The vitacompanion chain that keeps the console awake, and how often it is repeated (keep_awake).
 KEEP_AWAKE = 'nosleep on; screen on'
-KEEP_AWAKE_SECONDS = 10
 WAKE_SECONDS = 5  # how long wake waits for the screen to draw again after a "screen on"
 BUILD_WAIT_SECONDS = 900  # how long sync, run, install and seed wait for a build holding vita-build (reading)
 
@@ -152,9 +151,6 @@ def require(name):
         )
 
 
-_awake = None
-
-
 def nudge():
     """Sends KEEP_AWAKE once; a console that does not answer is left alone."""
     with contextlib.suppress(OSError):
@@ -183,23 +179,6 @@ def wake():
             return  # no perf command
         if float(fps.group(1)) > 0 or float(fps.group(2)) > 0:
             return  # drawing
-
-
-def keep_awake():
-    """Keeps the console from sleeping while this script runs. vitacompanion's "nosleep on"
-    holds off standby but not the display's idle timeout, which pauses the game (see wake);
-    repeating "screen on" from the host keeps the display on."""
-    global _awake
-    if _awake:
-        return
-
-    def tick():
-        while True:
-            nudge()
-            time.sleep(KEEP_AWAKE_SECONDS)
-
-    _awake = threading.Thread(target=tick, daemon=True)
-    _awake.start()
 
 
 def shot(out: Path):
@@ -797,7 +776,7 @@ def launch_game():
 
 def args_line(flags):
     """Flags as args.txt takes them: ProbeFiles splits the file at spaces and keeps "quoted words"
-    whole, so a value with spaces ("Station Square", "A>B") is quoted. A word that starts with a dash
+    whole, so a value with spaces ("A B") is quoted. A word that starts with a dash
     stays as it is: `args "-hunt-heartbeat 5"` is still two words."""
     return ' '.join(f'"{f}"' if ' ' in f and not f.startswith('-') and '"' not in f else f for f in flags)
 
@@ -826,7 +805,11 @@ def main():
 
 
 def run_command():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    # No -h: argparse would read the probe flags (-hunt-heartbeat) as -h with a value and print the help.
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, add_help=False
+    )
+    parser.add_argument('--help', action='help', help='show this help and exit')
     parser.add_argument(
         'command',
         choices=[

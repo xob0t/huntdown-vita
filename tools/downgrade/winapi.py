@@ -6,9 +6,6 @@ import ctypes.wintypes as wt
 
 kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
 
-PROCESS_ALL_ACCESS = 0x1F0FFF
-HIGH_PRIORITY_CLASS = 0x80  # SetPriorityClass, and a creation flag
-CREATE_SUSPENDED = 0x4
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9  # JOBOBJECTINFOCLASS
 

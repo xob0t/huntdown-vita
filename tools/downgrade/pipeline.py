@@ -1,4 +1,4 @@
-"""Translate the installed PC build of Huntdown (Unity 2022.3) into a Unity 2018.2 project and a
+"""Translate the installed PC build of Huntdown (Unity 2019.4) into a Unity 2018.2 project and a
 PS Vita player.
 
     uv run tools/downgrade/pipeline.py rip
@@ -22,11 +22,11 @@ Stages, each runnable alone:
            (minutes, not the editor's half hour). For code changes; then vita.py sync.
 
 HUNT_* environment variables switch parts of the stages on and off: common.BUILD_SWITCHES lists them with
-their values, and docs/build.md describes them.
+their values (docs/build.md).
 
 The game installation is only read. Outputs go to work/, builds/ and artifacts/. The stages after rip
-(project, build, package) follow The Drifter's port (github.com/xob0t/the-drifter-vita) as they are
-written.
+(project, build, package) follow The Drifter's port (github.com/xob0t/the-drifter-vita) and Crow
+Country's (github.com/xob0t/crow-country-vita).
 """
 
 import argparse
@@ -483,8 +483,7 @@ def link_check(version: str, platform: str):
     for dll in roots:
         shutil.copy2(dll, managed / dll.name)
     link = staging / 'link.xml'
-    exported = WORK / f'rip-{version}' / 'ExportedProject'
-    link.write_text(link_xml(exported, paths.target_engine, roots, platform), encoding='utf-8')
+    link.write_text(link_xml(roots, platform), encoding='utf-8')
     whitelists = paths.data / 'PlaybackEngines' / 'PSP2Player' / 'Whitelists' if platform == 'vita' else None
     command = [
         linker,
@@ -744,7 +743,7 @@ def assembly_overlay(exported: Path, game: Path, version: str, platform: str):
 
 
 def asset_overlay(exported: Path, game: Path, version: str, platform: str, assemblies: list):
-    """The rules for the exported assets and settings (shader_rules.py, asset_rules.py, material_rules.py,
+    """The rules for the exported assets and settings (shader_rules.py, asset_rules.py, sprite_rules.py,
     bundle_rules.py), in order: a rule reads the files the rules before it changed (asset_rules.current_bytes).
     Returns (overlay, exported paths left out)."""
     overlay, excluded = {}, set()
@@ -763,8 +762,7 @@ def asset_overlay(exported: Path, game: Path, version: str, platform: str, assem
         overlay.update(run(texture_compression_overlay, exported, overlay))
         overlay.update(run(sprite_overlay, exported, game, overlay))
         overlay.update(run(rewired_vita_overlay, exported, overlay, platform))
-        engine = editor_paths(version, platform).target_engine
-        overlay[Path('Assets') / 'link.xml'] = run(link_xml, exported, engine, assemblies, platform).encode()
+        overlay[Path('Assets') / 'link.xml'] = run(link_xml, assemblies, platform).encode()
         overlay[Path('Assets') / 'link.xml.meta'] = stable_meta('asset', 'link.xml', 'TextScriptImporter').encode()
         excluded.update(run(bundle_overlay, exported, game))
     return overlay, excluded
@@ -914,7 +912,7 @@ def build(
 def check_build_output(output: Path, platform: str, started: float, log_path: Path):
     """Stop when a build the editor reported as a success is not one: Unity can report success after a
     failed IL2CPP step (a failed link leaves the previous build's game module), with errors in its
-    report, or after scene steps of the editor scripts failed. A good build has no error."""
+    report. A good build has no error."""
     player = next(output.glob('*.self'), None) if platform == 'vita' else (output if output.exists() else None)
     if player is None:
         sys.exit(f'Unity reported success but wrote no player at {output}')
@@ -932,38 +930,18 @@ def check_build_output(output: Path, platform: str, started: float, log_path: Pa
     if not summary:
         sys.exit(f'The editor log has no DOWNGRADE_BUILD summary; see {log_path}')
     errors = int(summary[-1])
-    failed = [line[:SUMMARY_WIDTH] for line in SCENE_STEP_FAILED.findall(log_text)]
-    if errors:
-        # The build report's errors, which DowngradeBuild writes beside the player.
-        messages = output.with_name(output.name + '.messages.txt')
-        reported = messages.read_text(encoding='utf-8', errors='replace').splitlines() if messages.exists() else []
-        failed += [line[:SUMMARY_WIDTH] for line in reported if line.startswith(('Error\t', 'Exception\t'))]
-    if not errors and not failed:
+    if not errors:
         return
+    # The build report's errors, which DowngradeBuild writes beside the player.
+    messages = output.with_name(output.name + '.messages.txt')
+    reported = messages.read_text(encoding='utf-8', errors='replace').splitlines() if messages.exists() else []
+    failed = [line[:SUMMARY_WIDTH] for line in reported if line.startswith(('Error\t', 'Exception\t'))]
     for line in failed[:20]:
         log(f'  {line}')
-    message = (
+    sys.exit(
         f'The build reports {errors} errors, and {len(failed)} lines above say what failed ({log_path}, '
         f'{output.name}.messages.txt beside the player); a good build has none'
     )
-    if build_switches(platform, ('check',))['HUNT_ALLOW_SCENE_FAILURES'] != '1':
-        sys.exit(f'{message}. HUNT_ALLOW_SCENE_FAILURES=1 lets it through')
-    log(f'WARNING (HUNT_ALLOW_SCENE_FAILURES=1): {message}')
-
-
-# The editor scripts' per-scene steps catch their exceptions, log them and go on, and Unity then
-# reports success: a merge or split that threw halfway leaves its scene as far as it got, and an
-# area whose MeshCombineStudio bake failed combines at run time again (Station Square -> Pool ran out
-# of memory that way). check_build_output prints their failure lines and stops: MergeScenes.cs and
-# PlayerMerge.cs write "<step> <scene> failed: <exception>"; an enemy type's or the player's atlas
-# (compat/MergeEnemies.cs, compat/PlayerMerge.cs) "HUNT_ENEMY_ATLAS scene=<scene> type=<type> failed: <exception>";
-# MeshCombineBake.cs (the bake's and the strip's), ProBuilderMeshes.cs and VariantBake.cs a summary with
-# failed=N. Any other error (a script without a failure line) counts in DOWNGRADE_BUILD's errors.
-SCENE_STEP_FAILED = re.compile(
-    r'^DOWNGRADE_(?:SPLIT|MERGE|PLAYER_MERGE|HUNT_ENEMY_ATLAS) .* failed: .*$'
-    r'|^DOWNGRADE_(?:MCS|PROBUILDER|VARIANT_BAKE) .*\bfailed=[1-9].*$',
-    re.MULTILINE,
-)
 
 
 def save_code_stage(project: Path, version: str, log_path: Path, inputs: dict):
@@ -1034,12 +1012,12 @@ def warn_stale_plugins(project: Path, version: str, platform: str):
 # serialized layout of the build's assemblies (SerializedLayout.cs: each field line has its place among
 # its type's serialized fields, "<assembly> field <type>.<field> #2 <field type>"), the hashes of the
 # non-code inputs of its project (below the tools' folder) and its build switches: the rule sources as
-# project read them (PROJECT_SOURCES: the rules, common.py's asset lists, the PS Vita shaders
-# vita_lit_overlay copies in, the decompiler's patches), the build script as build wrote it
+# project read them (PROJECT_SOURCES: the rules, common.py's asset lists, the decompiler's patches),
+# the build script as build wrote it
 # (BUILD_SOURCES), and the switches (switch_record).
 LAYOUT = 'serialized-layout.txt'
 NON_CODE_INPUTS = 'non-code-inputs.json'
-PROJECT_SOURCES = ('*_rules.py', 'common.py', 'vita_shaders/*', 'patches/*')
+PROJECT_SOURCES = ('*_rules.py', 'common.py', 'patches/*')
 BUILD_SOURCES = ('unity/*.cs',)
 NON_CODE_SOURCES = PROJECT_SOURCES + BUILD_SOURCES
 
@@ -1330,8 +1308,8 @@ def native_plugins(output: Path):
 
 # The PS Vita player's graphics jobs: the 2018.2 editor has no setting for them on the PS Vita, but its
 # player reads gfx-enable-gfx-jobs from Media/boot.config at start and then records the camera's draws in
-# Unity's job workers beside its render thread (Station Square, main thread: standing 24.9 -> 22.1 ms,
-# steady real fight 59.1 -> 55.2). docs/vita.md has their history. HUNT_GFX_JOBS=on (the default) writes
+# Unity's job workers beside its render thread (measured in Crow Country's port: 24.9 -> 22.1 ms of main
+# thread in a busy scene). HUNT_GFX_JOBS=on (the default) writes
 # gfx-enable-gfx-jobs=1; off writes it out; build and quickcode run it.
 def boot_config(output: Path):
     path = output / 'Media' / 'boot.config'
@@ -1349,10 +1327,9 @@ def boot_config(output: Path):
 def reproducible_player_data(data: Path):
     """What the editor writes differently into globalgamemanagers on every build of the same project, set
     in place (four objects, each the same size before and after), so two builds of one tree give the same
-    bytes there (docs/build.md, "Checking that builds are reproducible"):
+    bytes there:
     - RuntimeInitializeOnLoadManager: the [RuntimeInitializeOnLoadMethod] methods, which the player runs in
-      the order listed. The editor lists them in another order on every build (HuntCompat's AssemblyAliases,
-      MainThread and ProbeFiles before or among I2 Localization's 15 AutoRegisters). Sorted here by
+      the order listed. The editor lists them in another order on every build. Sorted here by
       assembly, namespace, class and method name: HuntCompat's run first, each load type in a fixed order.
     - MonoManager's list of the player's scripts (m_Scripts) and ResourceManager's list of the Resources
       assets' dependencies (m_DependentAssets), each in another order on some builds: sorted by object (the
@@ -1634,8 +1611,8 @@ def main():
     parser.add_argument(
         '--scenes',
         help='build: a TEST build of only these scenes of the build settings, by name, comma-separated '
-        '("Title,Station Square"), into builds/hunt-<version>[-vita]-scenes (vita.py --build takes it); the '
-        'first scene (Logos) is always in. The game loads scenes by name: '
+        '("MainScene"), into builds/hunt-<version>[-vita]-scenes (vita.py --build takes it); the '
+        'first scene is always in. The game loads scenes by name: '
         'loading one left out fails',
     )
     parser.add_argument('--development', action='store_true', help="build: Unity's development player")

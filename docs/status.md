@@ -34,7 +34,7 @@ Code:
 Sound:
 
 - The export writes every clip at Vorbis quality 0, the lowest: the Windows players import them at 0.5, about the size of the game's own bundles, preloaded unless they stream.
-- On the PS Vita, the 3,796 short clips stay compressed in memory as HEVAG instead of being decompressed to PCM when loaded, and the music and the two clips of 45 s or more stream as MP3.
+- On the PS Vita, the 3,796 short clips stay compressed in memory as HEVAG instead of being decompressed to PCM when loaded, and the music and the two clips of 45 s or more stream. The PS Vita's importer encodes every clip as HEVAG, the streams too (the rules ask for MP3 there, which it doesn't do).
 - No clip loads its data in the background (Load In Background stays off, as the game has it). The game unloads each sound bundle 0.3 s after taking its clips out; a clip still loading in the background then never finished, and unloading it when the next level loaded waited for it forever: the game hung at the first level's loading.
 - The mission briefing moves Wolfmother's mouth by reading her voice's samples, which only works on a clip decompressed when it loads: her 28 clips decompress on load, as PCM on the PS Vita (HEVAG stays compressed even then). Compressed, the read failed and her mouth stayed still.
 

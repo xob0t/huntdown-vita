@@ -645,8 +645,9 @@ def check_vita_sdk():
 
 
 def vita_host_setting():
-    """(variable, value) of the console's address: HUNT_VITA_HOST, else DRIFTER_VITA_HOST (common.VITA_HOST)."""
-    for name in ('HUNT_VITA_HOST', 'DRIFTER_VITA_HOST'):
+    """(variable, value) of the console's address, in common.VITA_HOST's order: HUNT_VITA_HOST, else
+    CROW_VITA_HOST or DRIFTER_VITA_HOST, set up for the earlier ports."""
+    for name in ('HUNT_VITA_HOST', 'CROW_VITA_HOST', 'DRIFTER_VITA_HOST'):
         value, _ = env(name)
         if value:
             return name, value

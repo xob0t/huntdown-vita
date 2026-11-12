@@ -1,5 +1,5 @@
 """Paths, constants and small helpers shared by pipeline.py, its rule modules (asset_rules.py,
-material_rules.py, shader_rules.py, video_rules.py, code_trim.py) and the other tools. Tools that
+bundle_rules.py, shader_rules.py, sprite_rules.py) and the other tools. Tools that
 import pipeline also reach the names pipeline.py imports from here as pipeline.<name>."""
 
 import concurrent.futures
@@ -422,24 +422,6 @@ NATIVE_ASSETS = {
 # ... and with scenes, every serialized YAML file of a project: what can reference other files by GUID.
 YAML_FILES = NATIVE_ASSETS | {'.unity'}
 
-# Pieces of Unity's YAML the rules read and write. A number as the export writes it, for float(): the
-# particle materials' _CameraFadeParams is {r: 0, g: Infinity, ...}, and a pattern without Infinity
-# matched no such material, so the Fade particles lost _ALPHABLEND_ON (drawn opaque).
-NUMBER = r'([-+\d.eE]+|-?Infinity|NaN)'
-VECTOR = rf'\{{r: {NUMBER}, g: {NUMBER}, b: {NUMBER}, a: {NUMBER}\}}'  # a colour (Vector4 alike)
-SHADER_LINE = re.compile(r'^  m_Shader: (\{.*\})$', re.MULTILINE)  # a material's shader reference
-NAME_LINE = re.compile(r'^  m_Name: ?(.*)$', re.MULTILINE)  # the first is the main object's name
-
-
-def builtin_shader(file_id):
-    """A reference to a built-in shader: Standard 46, Legacy Shaders/Diffuse 7, Particles/Standard Surface 210."""
-    return f'{{fileID: {file_id}, guid: 0000000000000000f000000000000000, type: 0}}'
-
-
-BUILTIN_STANDARD = builtin_shader(46)
-BUILTIN_LEGACY_DIFFUSE = builtin_shader(7)
-BUILTIN_PARTICLES_SURFACE = builtin_shader(210)
-
 
 def require(match, path, what):
     """match, or stop with the file's name when a rule's pattern found nothing in it."""
@@ -454,11 +436,6 @@ def game_data(game: Path) -> Path:
     if data is None:
         sys.exit(f'No <name>_Data folder in {game}: is that the game folder? (--game, HUNT_GAME)')
     return data
-
-
-def meta_guid(meta: Path):
-    match = re.search(r'^guid: ([0-9a-f]{32})', meta.read_text(encoding='utf-8'), re.MULTILINE)
-    return match.group(1) if match else None
 
 
 def meta_of(path: Path) -> Path:
@@ -647,11 +624,10 @@ def expect(count: int, minimum: int, what: str):
 class Switch(NamedTuple):
     """A HUNT_* environment variable that changes what a stage writes.
     stage: 'code' (the rewriter: code, project, quickcode), 'project' (the asset rules), 'build' (the editor
-    scripts in unity/, as the build writes the scenes), 'player' (written into the PS Vita build by build and
-    quickcode), 'check' (the build's checks; writes nothing).
+    scripts in unity/), 'player' (written into the PS Vita build by build and quickcode).
     values: the allowed values, space-separated, or '' for a whole number.
-    vita, other: the default with the PS Vita's scene data (the PS Vita, or HUNT_VITA_DATA=1) and without; the
-    name of another switch takes its value; '' leaves it unset (the code's own default).
+    vita, other: the default on the PS Vita and elsewhere; the name of another switch takes its value; ''
+    leaves it unset (the code's own default).
     platforms: where it applies."""
 
     stage: str
@@ -666,12 +642,8 @@ class Switch(NamedTuple):
 # that build and quickcode warn when one differs from what the project or the build had. The editor gets
 # each build switch's value explicitly (unity/BuildUtil.cs: Switch). docs/build.md describes them.
 BUILD_SWITCHES = {
-    # 1: a Windows player with the PS Vita's defaults below, for measurements.
-    'HUNT_VITA_DATA': Switch('build', '0 1', '0', '0'),
-    # The PS Vita player's graphics jobs, in Media/boot.config (pipeline.boot_config; docs/vita.md).
+    # The PS Vita player's graphics jobs, in Media/boot.config (pipeline.boot_config).
     'HUNT_GFX_JOBS': Switch('player', 'on off', 'on', 'on', ('vita',)),
-    # 1: a build whose editor scripts failed in a scene, or with errors, goes through, for experiments.
-    'HUNT_ALLOW_SCENE_FAILURES': Switch('check', '0 1', '0', '0'),
 }
 
 
@@ -685,11 +657,10 @@ def build_switches(platform, stages=None):
             allowed = ', '.join(switch.values.split()) if switch.values else 'a whole number'
             sys.exit(f'{name}={value}: {name} takes {allowed} (common.BUILD_SWITCHES, docs/build.md)')
         given[name] = value
-    vita_data = platform == 'vita' or given['HUNT_VITA_DATA'] == '1'
 
     def resolved(name):
         switch = BUILD_SWITCHES[name]
-        default = switch.vita if vita_data else switch.other
+        default = switch.vita if platform == 'vita' else switch.other
         return given[name] or (resolved(default) if default in BUILD_SWITCHES else default)
 
     return {
