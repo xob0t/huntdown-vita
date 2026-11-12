@@ -1,0 +1,260 @@
+using System;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Threading;
+using UnityEngine;
+
+// The PS Vita's CPU, GPU, bus and GPU crossbar clocks. The player's start applies the project's power mode (C),
+// which sets the ARM cores to 333 MHz, whatever was set before (an overclocking plugin's 500, say). The HuntClock
+// plugin (Media/Plugins/HuntClock.suprx, tools/downgrade/native/clock) calls the system's
+// scePowerSet*ClockFrequency, which the SDK's stubs lack. A background thread checks the clocks
+// every 2 s and sets them again when they are off target (after a suspend, or a power mode change).
+//   -hunt-cpu-mhz <n>   the ARM clock to keep, in MHz (default 444, the highest an application may
+//                       set: 500 fails with 0x802B0000 even with PSVshell, and falls back to 444;
+//                       0 leaves the power mode's 333). Only raised: a higher clock (PSVshell's 500) is left.
+//   -hunt-gpu-mhz <n>   the GPU core clock to keep: 41, 55, 111, 166 or 222 MHz, the values the system
+//                       takes from an application (scePowerSetGpuClockFrequency, NID 0x717DB06C in
+//                       vita-headers' db). Default 222: the power mode leaves 166, and gameplay is
+//                       GPU-bound there (Roadside 63.5 -> 49.5 ms a frame at 222, the picture the
+//                       same); 0 leaves the power mode's.
+//   -hunt-xbar-mhz <n>  the GPU crossbar clock to keep, 111 or 166 MHz (scePowerSetGpuXbarClockFrequency,
+//                       0xA7739DBE); default 0, left as it is.
+// -hunt-cycle, -hunt-fight-cycle and -hunt-ab take gpu=<mhz> (Perf.cs), cpumhz=<mhz> (the ARM clock set to
+// exactly that, lower included, at most 444) and xbarmhz=<mhz> (0 stops keeping).
+// The CLOCK log lines give the clocks at start (the bus's too: an application can't set it, status-log.md's
+// clocks of 19 Oct) and before and after each change.
+// Part of HuntCompat; see Compat2018.cs.
+namespace HuntCompat
+{
+    public static class Clock
+    {
+        const int DefaultMhz = 444;
+        const int DefaultGpuMhz = 222;
+        static readonly int[] GpuSteps = { 41, 55, 111, 166, 222 };
+        static readonly int[] XbarSteps = { 111, 166 };
+        // The clocks set to a fixed value: GPU, crossbar.
+        const int Gpu = 0, Xbar = 1;
+        static readonly string[] Names = { "GPU", "crossbar" };
+        static readonly int[] fixedTarget = new int[2];
+        static readonly bool[] keepFixed = new bool[2];
+        static int target;
+        static bool keepArm, armExact;
+        static readonly object gate = new object();
+        static Thread keeper;
+
+        [DllImport("HuntClock")] static extern int HuntClockSetArm(int mhz);
+        [DllImport("HuntClock")] static extern int HuntClockGetArm();
+        [DllImport("HuntClock")] static extern int HuntClockSetGpu(int mhz);
+        [DllImport("HuntClock")] static extern int HuntClockGetGpu();
+        [DllImport("HuntClock")] static extern int HuntClockGetBus();
+        [DllImport("HuntClock")] static extern int HuntClockSetXbar(int mhz);
+        [DllImport("HuntClock")] static extern int HuntClockGetXbar();
+
+        // From Diag.Install (a RuntimeInitializeOnLoadMethod: the build lists those, so quickcode can't add one).
+        internal static void Install()
+        {
+            if (Application.platform != RuntimePlatform.PSP2) return;
+            string[] args = ProbeFiles.Args;
+            target = HuntFlags.Int(args, "-hunt-cpu-mhz", DefaultMhz);
+            fixedTarget[Gpu] = HuntFlags.Int(args, "-hunt-gpu-mhz", DefaultGpuMhz);
+            fixedTarget[Xbar] = HuntFlags.Int(args, "-hunt-xbar-mhz", 0);
+            for (int which = Gpu; which <= Xbar; which++)
+                if (fixedTarget[which] > 0 && !Allowed(which, fixedTarget[which]))
+                {
+                    Debug.Log("CLOCK: " + Names[which] + " " + fixedTarget[which] + " MHz is not allowed (" + Steps(which) + ")");
+                    fixedTarget[which] = 0;
+                }
+            try { Debug.Log("CLOCK start: bus " + HuntClockGetBus() + " MHz, crossbar " + HuntClockGetXbar() + " MHz"); }
+            catch (Exception e) { Debug.Log("CLOCK: no bus clock in the HuntClock plugin (" + e.GetType().Name + ")"); }
+            lock (gate)
+            {
+                keepArm = target > 0 && Apply("start");
+                for (int which = Gpu; which <= Xbar; which++)
+                    keepFixed[which] = fixedTarget[which] > 0 && ApplyFixed(which, "start");
+            }
+            EnsureKeeper();
+        }
+
+        static bool Allowed(int which, int mhz)
+        {
+            return Array.IndexOf(which == Gpu ? GpuSteps : XbarSteps, mhz) >= 0;
+        }
+
+        static string Steps(int which)
+        {
+            return which == Gpu ? "41, 55, 111, 166 or 222" : "111 or 166";
+        }
+
+        static void EnsureKeeper()
+        {
+            lock (gate)
+            {
+                if (keeper != null || !(keepArm || keepFixed[Gpu] || keepFixed[Xbar])) return;
+                keeper = new Thread(Keep) { IsBackground = true, Name = "HuntClock" };
+                keeper.Start();
+            }
+        }
+
+        static void Keep()
+        {
+            while (true)
+            {
+                Thread.Sleep(2000);
+                lock (gate)
+                {
+                    if (keepArm) keepArm = Apply(null);
+                    for (int which = Gpu; which <= Xbar; which++)
+                        if (keepFixed[which]) keepFixed[which] = ApplyFixed(which, null);
+                }
+            }
+        }
+
+        static int GetFixed(int which)
+        {
+            return which == Gpu ? HuntClockGetGpu() : HuntClockGetXbar();
+        }
+
+        static int SetFixed(int which, int mhz)
+        {
+            return which == Gpu ? HuntClockSetGpu(mhz) : HuntClockSetXbar(mhz);
+        }
+
+        // A fixed clock at its target (set when different, logged when it changes); false when the
+        // plugin lacks the function or the system refuses the value.
+        static bool ApplyFixed(int which, string why)
+        {
+            int goal = fixedTarget[which];
+            try
+            {
+                int before = GetFixed(which);
+                if (before == goal)
+                {
+                    if (why != null) Debug.Log("CLOCK " + why + ": " + Names[which] + " " + before + " MHz, target " + goal);
+                    return true;
+                }
+                int result = SetFixed(which, goal);
+                int after = GetFixed(which);
+                Debug.Log("CLOCK " + (why ?? "reset") + ": " + Names[which] + " " + before + " -> " + after + " MHz (target " + goal
+                    + (result != 0 ? ", error 0x" + result.ToString("X8") : "") + ")");
+                return result == 0 && after == goal;
+            }
+            catch (Exception e)
+            {
+                Debug.Log("CLOCK: no " + Names[which] + " clock in the HuntClock plugin (" + e.GetType().Name + ": " + e.Message + ")");
+                return false;
+            }
+        }
+
+        // For the probe's heartbeat-style lines: "arm/gpu/bus/xbar" in MHz, or null without the plugin.
+        internal static string Describe()
+        {
+            if (Application.platform != RuntimePlatform.PSP2) return null;
+            try { return DescribeNative(); }
+            catch (Exception) { return null; }
+        }
+
+        // Apart, as Mono looks the plugin up when it compiles a caller (see Threads.cs' Threads.SelfNative).
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        static string DescribeNative()
+        {
+            string clocks = HuntClockGetArm() + "/" + HuntClockGetGpu();
+            try { clocks += "/" + HuntClockGetBus() + "/" + HuntClockGetXbar(); }
+            catch (Exception) { }
+            return clocks;
+        }
+
+        // -hunt-cycle's gpu=<mhz>: one change of the GPU clock, kept from then on.
+        internal static void SetGpu(int mhz)
+        {
+            SetKept(Gpu, mhz);
+        }
+
+        static void SetKept(int which, int mhz)
+        {
+            if (Application.platform != RuntimePlatform.PSP2) return;
+            lock (gate)
+            {
+                if (mhz == 0)
+                {
+                    keepFixed[which] = false;
+                    Debug.Log("CLOCK change: " + Names[which] + " no longer kept");
+                    return;
+                }
+                if (!Allowed(which, mhz))
+                {
+                    Debug.Log("CLOCK: " + Names[which] + " " + mhz + " MHz is not allowed (" + Steps(which) + ")");
+                    return;
+                }
+                fixedTarget[which] = mhz;
+                keepFixed[which] = ApplyFixed(which, "change");
+            }
+            EnsureKeeper();
+        }
+
+        // The cycles' clock keys (Quality.Change): cpumhz=, xbarmhz=; false for other keys.
+        internal static bool Change(string key, string value)
+        {
+            if (key != "cpumhz" && key != "xbarmhz") return false;
+            int mhz;
+            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out mhz) || mhz < 0)
+            {
+                Debug.Log("CLOCK: " + key + " takes a number of MHz, not " + value);
+                return true;
+            }
+            if (key == "xbarmhz") SetKept(Xbar, mhz);
+            else if (Application.platform == RuntimePlatform.PSP2)
+            {
+                if (mhz > DefaultMhz)
+                {
+                    Debug.Log("CLOCK: cpumhz is at most " + DefaultMhz + ", not " + mhz);
+                    return true;
+                }
+                lock (gate)
+                {
+                    target = mhz;
+                    armExact = true;
+                    keepArm = mhz > 0 && Apply("change");
+                }
+                EnsureKeeper();
+            }
+            return true;
+        }
+
+        // Sets the clock when it is below the target (or, after cpumhz=, when it is anything else); false
+        // when the plugin is missing or the system doesn't take the clock.
+        static bool Apply(string why)
+        {
+            try
+            {
+                int before = HuntClockGetArm();
+                if (before == target || (before > target && !armExact))
+                {
+                    if (why != null) Debug.Log("CLOCK " + why + ": ARM " + before + " MHz, target " + target);
+                    return true;
+                }
+                int result = HuntClockSetArm(target);
+                int after = HuntClockGetArm();
+                Debug.Log("CLOCK " + (why ?? "reset") + ": ARM " + before + " -> " + after + " MHz (target " + target
+                    + (result != 0 ? ", error 0x" + result.ToString("X8") : "") + ")");
+                // A clock set exactly stops being kept when the system (or another plugin) holds another.
+                if (armExact) return result == 0 && after == target;
+                // A target the system refuses would log every 2 s: keep what it allows, or stop.
+                if (after <= before)
+                {
+                    // An application can set at most 444 (0x802B0000 above it); 500 needs a kernel plugin.
+                    if (target <= DefaultMhz) return false;
+                    target = DefaultMhz;
+                    return Apply(why);
+                }
+                if (after < target) target = after;
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.Log("CLOCK: no HuntClock plugin (" + e.GetType().Name + ": " + e.Message + ")");
+                return false;
+            }
+        }
+    }
+}

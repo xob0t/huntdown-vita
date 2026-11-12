@@ -1,0 +1,330 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+// HuntCompat's start (Install: every module's defaults and flags) and the measurement probe, which is off
+// unless a -hunt-* flag is given (on the PS Vita, in ux0:data/hunt/args.txt; see ProbeFiles). Each of
+// Diag's own flags has a line in Help. Heartbeats go to the player log as "HEARTBEAT key=value ...", for
+// tools to read.
+// Part of HuntCompat; see Compat2018.cs.
+namespace HuntCompat
+{
+    public class Diag : MonoBehaviour
+    {
+        static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+
+        // The PS Vita's free memory readers (none on other players): name -> UnityEngine.PSVita.Diagnostics method.
+        static readonly KeyValuePair<string, MethodInfo>[] FreeMemory = FindFreeMemory();
+
+        static KeyValuePair<string, MethodInfo>[] FindFreeMemory()
+        {
+            Type diagnostics = AppDomain.CurrentDomain.GetAssemblies()
+                .Select(a => a.GetType("UnityEngine.PSVita.Diagnostics", false)).FirstOrDefault(t => t != null);
+            if (diagnostics == null) return new KeyValuePair<string, MethodInfo>[0];
+            return new[] { "LPDDR", "CDRAM", "PHYSCONT" }
+                .Select(n => new KeyValuePair<string, MethodInfo>("free" + n, diagnostics.GetMethod("GetFreeMemory" + n, BindingFlags.Static | BindingFlags.Public)))
+                .Where(p => p.Value != null).ToArray();
+        }
+        const string Help =
+            "-hunt-scene <name>       load this scene (a build scene's name) 2 s after the first scene loaded\n" +
+            "-hunt-heartbeat <s>      every s seconds, log frame times, GC and memory, visible renderers and lights\n" +
+            "-hunt-quit-after <s>     quit s seconds after the probe starts\n" +
+            "-hunt-shot <s> <path>    save a screenshot s seconds after the last scene load\n" +
+            "-hunt-shots <s> <prefix> [after]  a screenshot every s seconds, <prefix>-<seconds>.png, from after seconds on (default 0),\n" +
+            "                         for what a run shows over time (each takes ~0.6 s on the PS Vita)\n" +
+            "-hunt-no-vsync           vSyncCount 0 and no frame cap, for unsynchronized frame times\n" +
+            "-hunt-mute               no sound (AudioListener.volume 0, kept there), for test runs on a PC in use\n" +
+            "-hunt-stall-dump <s>     crash the player when a frame has taken s seconds, for a core dump with the main thread's stack\n" +
+            "-hunt-stall-after <t>    with -hunt-stall-dump, only frames that start t seconds or more after startup (skips earlier stalls)\n" +
+            "-hunt-find <regex> <s>   s seconds after each scene load, log every renderer (active or not) whose hierarchy path matches\n" +
+            "                         the regex: active, enabled, isVisible, bounds, mesh, materials and shaders (HUNT_FIND), for\n" +
+            "                         what looks missing in play";
+
+        static string[] args;
+        static string sceneToLoad;
+        static float heartbeat, quitAfter = -1f, shotAfter = -1f;
+        static string shotPath, shotsPrefix;
+        static float shotsEvery = -1f, lastShots, shotsAfter;
+        static bool noVsync, mute;
+        static System.Text.RegularExpressions.Regex findPattern;
+        static float findAfter = -1f;
+        static float stallDump = -1f, stallAfter;
+        static volatile float frameStartTime;  // realtimeSinceStartup at frameStartTicks
+        static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+        static long frameStartTicks;
+
+        float started, lastBeat, lastLoad, worst;
+        int frames, collections;
+        double frameSum;
+        bool shotTaken, sceneRequested, found;
+
+        // HuntCompat's start: every module's defaults (the PS Vita's among them) and flags, then the probe's
+        // own. Each module on its own: one that throws (a flag it can't read) is logged and the rest go on.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        static void Install()
+        {
+            args = ProbeFiles.Args;
+            Guard("Clock", Clock.Install);
+            Guard("Preload", Preload.Start);  // the menus' sheets read ahead (Preload.cs; PS Vita default)
+            // -hunt-load-priority low|belownormal|normal|high: the main thread's time per frame for finishing
+            // asynchronous loads (Application.backgroundLoadingPriority; an experiment, the game's own unless given).
+            Guard("LoadPriority", a =>
+            {
+                string priority = HuntFlags.Value(a, "-hunt-load-priority");
+                if (priority == null) return;
+                Application.backgroundLoadingPriority = priority == "low" ? ThreadPriority.Low : priority == "belownormal" ? ThreadPriority.BelowNormal
+                    : priority == "high" ? ThreadPriority.High : ThreadPriority.Normal;
+                Debug.Log("HUNT_DIAG backgroundLoadingPriority " + Application.backgroundLoadingPriority);
+            });
+            // Who ends the player, with the stack of the call: a quit the logs would otherwise not explain.
+            Application.quitting += () => Debug.Log("HUNT_QUIT at " + Time.realtimeSinceStartup.ToString("F2", Inv) + " s, frame " +
+                                                    Time.frameCount + "\n" + Environment.StackTrace);
+            AppDomain.CurrentDomain.UnhandledException += (sender, e) => Debug.Log("HUNT_UNHANDLED " + e.ExceptionObject);
+            if (!args.Any(a => a.StartsWith("-hunt-"))) return;
+            sceneToLoad = HuntFlags.Value(args, "-hunt-scene");
+            heartbeat = HuntFlags.Number(args, "-hunt-heartbeat", 0f);
+            quitAfter = HuntFlags.Number(args, "-hunt-quit-after", -1f);
+            shotAfter = HuntFlags.Number(args, "-hunt-shot", -1f);
+            shotPath = HuntFlags.Word(args, "-hunt-shot", 2);
+            shotsEvery = HuntFlags.Number(args, "-hunt-shots", -1f);
+            shotsPrefix = HuntFlags.Word(args, "-hunt-shots", 2);
+            shotsAfter = HuntFlags.NumberAt(args, "-hunt-shots", 3, 0f);
+            noVsync = HuntFlags.Has(args, "-hunt-no-vsync");
+            mute = HuntFlags.Has(args, "-hunt-mute");
+            if (mute) AudioListener.volume = 0f;
+            string find = HuntFlags.Value(args, "-hunt-find");
+            if (find != null)
+            {
+                findPattern = new System.Text.RegularExpressions.Regex(find);
+                findAfter = HuntFlags.NumberAt(args, "-hunt-find", 2, 5f);
+            }
+            stallDump = HuntFlags.Number(args, "-hunt-stall-dump", -1f);
+            stallAfter = HuntFlags.Number(args, "-hunt-stall-after", 0f);
+            if (stallDump > 0f) new System.Threading.Thread(WatchForStall) { IsBackground = true, Name = "HuntStallWatch" }.Start();
+            if (HuntFlags.Has(args, "-hunt-help")) Debug.Log("HUNT_DIAG flags:\n" + Help);
+            var probe = new GameObject("HuntDiag");
+            DontDestroyOnLoad(probe);
+            probe.AddComponent<Diag>();
+        }
+
+        internal static void Guard(string module, Action install)
+        {
+            try
+            {
+                install();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError("HUNT_INSTALL_FAIL " + module + ": " + exception);
+            }
+        }
+
+        static void Guard(string module, Action<string[]> install)
+        {
+            Guard(module, () => install(args));
+        }
+
+        // -hunt-stall-dump: a frame that never ends in the logs (the PS Vita's 40-60 s frames after a
+        // scene load) can't say what it spends its time on, and the console has no sampling profiler.
+        // Crashing the player mid-frame leaves a core dump with every thread's stack, the main
+        // thread's among them (vita.py crashes --pull --thread main).
+        static void WatchForStall()
+        {
+            while (true)
+            {
+                System.Threading.Thread.Sleep(Math.Max(10, Math.Min(250, (int)(stallDump * 250f))));  // a quarter of the limit: short stalls too
+                long started = System.Threading.Interlocked.Read(ref frameStartTicks);
+                if (started == 0) continue;
+                double seconds = (clock.ElapsedTicks - started) / (double)System.Diagnostics.Stopwatch.Frequency;
+                if (seconds < stallDump || frameStartTime < stallAfter) continue;
+                Debug.Log("HUNT_STALL_DUMP a frame has taken " + seconds.ToString("F1") + " s: crashing for a dump");
+                ProbeFiles.Flush(3000);  // the queued lines, before the crash loses them
+                System.Runtime.InteropServices.Marshal.WriteInt32(new IntPtr(16), 0);  // unmapped: a data abort
+                Environment.FailFast("HuntCompat stall dump");
+            }
+        }
+
+        void Start()
+        {
+            started = lastBeat = lastLoad = Time.realtimeSinceStartup;
+            collections = GC.CollectionCount(0);
+            SceneManager.sceneLoaded += (scene, mode) =>
+            {
+                lastLoad = Time.realtimeSinceStartup;
+                shotTaken = false;
+                found = false;
+                Debug.Log("HUNT_DIAG scene loaded " + scene.name + " (" + mode + ") at " + lastLoad.ToString("F2", Inv) + " s");
+            };
+            Debug.Log("HUNT_DIAG started: " + string.Join(" ", args.Where(a => a.StartsWith("-hunt-")).ToArray()));
+        }
+
+        static float lastUpdateAt = -1f;
+        static Diag probe;
+
+        // A screenshot of the frame as shown (-hunt-shot, -hunt-pad-press's shot, -hunt-ab). On the PS Vita
+        // ScreenCapture writes nothing (and vitacompanion's screenshot can run out of memory), so there the
+        // frame is read back at its end and saved as a PNG (960x544 RGB, about 1.5 MB while it is made).
+        internal static void Shot(string path)
+        {
+            if (Application.platform != RuntimePlatform.PSP2 || probe == null) ScreenCapture.CaptureScreenshot(path);
+            else probe.StartCoroutine(SaveFrame(path));
+        }
+
+        static System.Collections.IEnumerator SaveFrame(string path)
+        {
+            yield return new WaitForEndOfFrame();
+            var picture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
+            try
+            {
+                picture.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0, false);
+                picture.Apply(false);
+                System.IO.File.WriteAllBytes(path, picture.EncodeToPNG());
+            }
+            catch (Exception exception)
+            {
+                Debug.Log("HUNT_DIAG screenshot " + path + " failed: " + exception.Message);
+            }
+            Destroy(picture);
+        }
+
+        void Awake()
+        {
+            probe = this;
+        }
+
+        void Update()
+        {
+            frameStartTime = Time.realtimeSinceStartup;
+            System.Threading.Interlocked.Exchange(ref frameStartTicks, clock.ElapsedTicks);
+            if (mute) AudioListener.volume = 0f;  // the game sets it from its sound settings
+            if (noVsync)
+            {
+                QualitySettings.vSyncCount = 0;
+                Application.targetFrameRate = -1;
+            }
+            float now = Time.realtimeSinceStartup;
+            if (sceneToLoad != null && !sceneRequested && now - lastLoad >= 2f)
+            {
+                sceneRequested = true;
+                Debug.Log("HUNT_DIAG loading " + sceneToLoad);
+                SceneManager.LoadScene(sceneToLoad);
+            }
+            // By the wall clock: Time.unscaledDeltaTime is clamped to maximumDeltaTime (-hunt-physics-cap).
+            float delta = lastUpdateAt >= 0f ? (now - lastUpdateAt) * 1000f : Time.unscaledDeltaTime * 1000f;
+            lastUpdateAt = now;
+            frames++;
+            frameSum += delta;
+            if (delta > worst) worst = delta;
+            if (heartbeat > 0f && now - lastBeat >= heartbeat) Beat(now);
+            if (shotsEvery > 0f && shotsPrefix != null && now - started >= shotsAfter && now - lastShots >= shotsEvery)
+            {
+                lastShots = now;
+                string path = shotsPrefix + "-" + ((int)(now - started)).ToString("D4") + ".png";
+                Shot(path);
+                Debug.Log("HUNT_DIAG screenshot " + path);
+            }
+            if (shotAfter >= 0f && !shotTaken && shotPath != null && now - lastLoad >= shotAfter)
+            {
+                shotTaken = true;
+                Shot(shotPath);
+                Debug.Log("HUNT_DIAG screenshot " + shotPath);
+            }
+            if (findPattern != null && !found && now - lastLoad >= findAfter)
+            {
+                found = true;
+                FindRenderers();
+            }
+            if (quitAfter >= 0f && now - started >= quitAfter)
+            {
+                Debug.Log("HUNT_DIAG quitting");
+                Application.Quit();
+            }
+        }
+
+        // -hunt-find: the renderers whose hierarchy path matches, whatever their state.
+        static void FindRenderers()
+        {
+            int count = 0;
+            foreach (Renderer renderer in Resources.FindObjectsOfTypeAll<Renderer>())
+            {
+                if (!renderer.gameObject.scene.IsValid()) continue;  // assets and prefabs
+                string path = Hierarchy.Full(renderer.transform);
+                if (!findPattern.IsMatch(path)) continue;
+                count++;
+                var line = new StringBuilder("HUNT_FIND ").Append(path).Append(" [").Append(renderer.gameObject.scene.name).Append("]")
+                    .Append(" active=").Append(renderer.gameObject.activeInHierarchy ? 1 : 0)
+                    .Append(" enabled=").Append(renderer.enabled ? 1 : 0)
+                    .Append(" visible=").Append(renderer.isVisible ? 1 : 0)
+                    .Append(" layer=").Append(renderer.gameObject.layer)
+                    .Append(" bounds=").Append(renderer.bounds.center.ToString("F2")).Append(renderer.bounds.size.ToString("F2"));
+                var spriteRenderer = renderer as SpriteRenderer;
+                if (spriteRenderer != null)
+                {
+                    Sprite sprite = spriteRenderer.sprite;
+                    line.Append(" sprite=").Append(sprite == null ? "none" : sprite.name + "@" + (sprite.texture == null ? "?" : sprite.texture.name) +
+                        sprite.rect.ToString("F0") + " verts=" + sprite.vertices.Length)
+                        .Append(" draw=").Append(spriteRenderer.drawMode).Append(" size=").Append(spriteRenderer.size.ToString("F1"))
+                        .Append(" scale=").Append(renderer.transform.lossyScale.ToString("F2"));
+                }
+                MeshFilter filter = renderer.GetComponent<MeshFilter>();
+                if (filter != null)
+                {
+                    Mesh mesh = filter.sharedMesh;
+                    line.Append(" mesh=").Append(mesh == null ? "none" : mesh.name + "(" + mesh.vertexCount + "v," + mesh.subMeshCount + "sub)");
+                }
+                foreach (Material material in renderer.sharedMaterials)
+                    line.Append(" mat=").Append(material == null ? "none" : material.name + "/" + (material.shader == null ? "none" : material.shader.name)
+                        + "/q" + material.renderQueue + (material.HasProperty("_Color") ? "/" + material.color.ToString("F2") : ""));
+                Debug.Log(line.ToString());
+            }
+            Debug.Log("HUNT_FIND " + count + " renderers match " + findPattern);
+        }
+
+        void Beat(float now)
+        {
+            int gc = GC.CollectionCount(0);
+            int visible = 0, renderers = 0, lit = 0;
+            var lights = new Dictionary<LightType, int>();
+            foreach (Light light in FindObjectsOfType<Light>())
+            {
+                if (!light.enabled || light.intensity <= 0f || !light.gameObject.activeInHierarchy) continue;
+                lit++;
+                int count;
+                lights.TryGetValue(light.type, out count);
+                lights[light.type] = count + 1;
+            }
+            foreach (Renderer renderer in FindObjectsOfType<Renderer>())
+            {
+                if (!renderer.enabled) continue;
+                renderers++;
+                if (renderer.isVisible) visible++;
+            }
+            var line = new StringBuilder("HEARTBEAT");
+            line.Append(" t=").Append((now - started).ToString("F1", Inv));
+            line.Append(" scene=").Append(SceneManager.GetActiveScene().name.Replace(' ', '_'));
+            line.Append(" fps=").Append((frames / (now - lastBeat)).ToString("F1", Inv));
+            line.Append(" ms=").Append((frameSum / Math.Max(frames, 1)).ToString("F2", Inv));
+            line.Append(" worst=").Append(worst.ToString("F1", Inv));
+            line.Append(" gc=").Append(gc - collections);
+            line.Append(" heapMB=").Append((GC.GetTotalMemory(false) / 1048576.0).ToString("F1", Inv));
+            // The PS Vita's free memory (UnityEngine.PSVita.Diagnostics, kept by link.xml; read by reflection, as
+            // HuntCompat is built for Windows too): main memory, video memory (CDRAM) and physically contiguous.
+            foreach (KeyValuePair<string, MethodInfo> free in FreeMemory)
+                line.Append(' ').Append(free.Key).Append("MB=").Append((Convert.ToInt64(free.Value.Invoke(null, null)) / 1048576.0).ToString("F1", Inv));
+            line.Append(" renderers=").Append(renderers).Append(" visible=").Append(visible);
+            line.Append(" lights=").Append(lit);
+            foreach (KeyValuePair<LightType, int> pair in lights) line.Append(' ').Append(pair.Key).Append('=').Append(pair.Value);
+            Debug.Log(line.ToString());
+            lastBeat = now;
+            frames = 0;
+            frameSum = 0;
+            worst = 0f;
+            collections = gc;
+        }
+    }
+
+}
