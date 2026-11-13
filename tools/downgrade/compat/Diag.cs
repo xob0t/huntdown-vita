@@ -62,6 +62,7 @@ namespace HuntCompat
 
         float started, lastBeat, lastLoad, worst;
         int frames, collections;
+        long allocated;
         double frameSum;
         bool shotTaken, sceneRequested, found;
 
@@ -73,6 +74,7 @@ namespace HuntCompat
             args = ProbeFiles.Args;
             Guard("Clock", Clock.Install);
             Guard("Preload", Preload.Start);  // the menus' sheets read ahead (Preload.cs; PS Vita default)
+            Guard("Gc", Gc.Install);  // the garbage collector held for safe points (Gc.cs; PS Vita default)
             // -hunt-load-priority low|belownormal|normal|high: the main thread's time per frame for finishing
             // asynchronous loads (Application.backgroundLoadingPriority; an experiment, the game's own unless given).
             Guard("LoadPriority", a =>
@@ -158,6 +160,7 @@ namespace HuntCompat
         {
             started = lastBeat = lastLoad = Time.realtimeSinceStartup;
             collections = GC.CollectionCount(0);
+            allocated = Gc.Allocated();
             SceneManager.sceneLoaded += (scene, mode) =>
             {
                 lastLoad = Time.realtimeSinceStartup;
@@ -332,6 +335,9 @@ namespace HuntCompat
             line.Append(" worst=").Append(worst.ToString("F1", Inv));
             line.Append(" gc=").Append(gc - collections);
             line.Append(" heapMB=").Append((GC.GetTotalMemory(false) / 1048576.0).ToString("F1", Inv));
+            // Allocated per second, the heartbeat's own lines among it (some KB; on the PS Vita, Gc.Allocated).
+            long nowAllocated = Gc.Allocated();
+            line.Append(" allocKBs=").Append(((nowAllocated - allocated) / 1024.0 / (now - lastBeat)).ToString("F0", Inv));
             // The PS Vita's free memory (UnityEngine.PSVita.Diagnostics, kept by link.xml; read by reflection, as
             // HuntCompat is built for Windows too): main memory, video memory (CDRAM) and physically contiguous.
             foreach (KeyValuePair<string, MethodInfo> free in FreeMemory)
@@ -359,6 +365,7 @@ namespace HuntCompat
             frameSum = 0;
             worst = 0f;
             collections = gc;
+            allocated = Gc.Allocated();
         }
     }
 

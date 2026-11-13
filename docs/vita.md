@@ -145,6 +145,9 @@ uv run tools/downgrade/vita.py args --
 | `-hunt-stall-from render` | With `-hunt-stall-dump`, time each frame from just before the engine renders, not from the probe's Update. |
 | `-hunt-visible-top` | With `-hunt-heartbeat`, a HUNT_VISIBLE line of the visible renderers by name (digits dropped) and sorting layer, the most first. It scans every renderer, so its own seconds show frames of 30-40 ms. |
 | `-hunt-debris <n>\|game` | How many debris pieces the game keeps: n, or `game` (256). The PS Vita's default is 128. `compat/Debris.cs`. |
+| `-hunt-gc game\|held` | When the garbage collector runs: `game`, its own timing (about every 60 s in a level, a 0.2 s stop); `held`, the PS Vita's default, at level starts and checkpoint restarts, at the pause menu, and at the cap. Each collection held logs a HUNT_GC line with its time. `compat/Gc.cs`. |
+| `-hunt-gc-cap <MB>` | With the collector held, the garbage that collects anywhere (default 24). `-hunt-gc-cap 1` collects about once a minute in play, to try the path. |
+| `-hunt-prof alloc` | In a `HUNT_PROF=1` build, the HUNT_PROF lines count KB allocated per frame instead of ms. See [Where a frame's time goes](#where-a-frames-time-goes). |
 | `-hunt-find <regex> <s>` | s seconds (default 5) after each scene load, log every renderer whose hierarchy path matches, active or not, with its state, bounds, mesh, materials and shaders (HUNT_FIND). |
 | `-hunt-activate <name> <s>` | s seconds after each scene load, activate every GameObject of that name with its parents. Repeatable. `compat/Video.cs`. |
 | `-hunt-video-log` | Log each playing video's clip, frame and time every second. `compat/Video.cs`. |
@@ -165,6 +168,7 @@ Each heartbeat then also logs a HUNT_PROF line: the methods that took the most, 
 Times include the calls inside, so `Game.Update` is the game's whole frame; what the heartbeat's `ms=` has beyond it is the engine's (rendering, the sprites' transforms, sound) and the wait for vsync.
 To see what the engine spends that time on, a stall dump some milliseconds into the rendering samples it: `-hunt-stall-dump 0.008 -hunt-stall-from render`.
 Build again without the switch to play: each timed call costs a little.
+With `-hunt-prof alloc` the lines count KB allocated per frame instead, for what the garbage collector has to collect; the heartbeat's `allocKBs=` is the whole player's per second, its own lines among it (about 8 KB/s).
 
 The CPU clock tells the main thread's limits from the GPU's: `-hunt-cpu-mhz 333` slows a CPU-bound spot, `-hunt-gpu-mhz 166` a GPU-bound one.
 

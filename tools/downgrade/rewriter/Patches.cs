@@ -192,6 +192,20 @@ partial class DowngradeAssemblies
         return count;
     }
 
+    // Game.InitLevel (a level's start or restart from a checkpoint) and Game.PauseGame(bool) (the pause menu) call
+    // HuntCompat Gc.LevelStart and Gc.Paused first: where the PS Vita's held garbage collector collects (compat/Gc.cs).
+    static int PatchGcSafePoints(ModuleDefinition module)
+    {
+        TypeDefinition game = GameType(module, "Game");
+        if (game == null) return 0;
+        MethodDefinition initLevel = game.Methods.Single(m => m.Name == "InitLevel" && m.Parameters.Count == 0);
+        MethodDefinition pause = game.Methods.Single(m =>
+            m.Name == "PauseGame" && m.Parameters.Count == 1 && m.Parameters[0].ParameterType.FullName == "System.Boolean");
+        Prepend(initLevel, Instruction.Create(OpCodes.Call, CompatMethod(module, "Gc", "LevelStart")));
+        Prepend(pause, Instruction.Create(OpCodes.Call, CompatMethod(module, "Gc", "Paused")));
+        return 2;
+    }
+
     // Under the build switch HUNT_PROF=1 (common.BUILD_SWITCHES, a code switch), every void FrameEvent, Update,
     // LateUpdate and FixedUpdate of the game's classes runs between HuntCompat Prof.Enter and Prof.Exit (its
     // "Class.Method" name, the start): the start goes in a new local, and the Exit call goes before each ret,

@@ -113,6 +113,7 @@ partial class DowngradeAssemblies
         new Pass("patches", Scope.Game, PatchLevelJump),
         new Pass("patches", Scope.Game, RouteClipLookups),
         new Pass("patches", Scope.Game, PatchDebrisPool),
+        new Pass("patches", Scope.Game, PatchGcSafePoints),
         new Pass("patches", Scope.Game, ProfileFrameMethods, "HUNT_PROF"),
         new Pass("patches", Scope.Game, RouteResourceLoads),
     };

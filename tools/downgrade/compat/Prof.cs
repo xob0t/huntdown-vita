@@ -12,6 +12,9 @@ using System.Text;
 // logs the methods that took the most, per frame, and resets (HUNT_PROF lines); the heartbeat's own ms= is
 // the whole frame, so what the game's code doesn't take is the engine's (rendering, the sprites'
 // transforms and batching) and the wait for vsync.
+//   -hunt-prof alloc   bytes allocated instead of time: KB per frame, for what the garbage collector has to
+//                      collect (compat/Gc.cs; the PS Vita's count goes up a few KB at a time, so a method's share
+//                      shows over many frames)
 // Part of HuntCompat; see Compat2018.cs.
 namespace HuntCompat
 {
@@ -19,47 +22,48 @@ namespace HuntCompat
     {
         sealed class Entry
         {
-            internal long ticks;
+            internal long sum;
             internal int calls;
         }
 
         static readonly Dictionary<string, Entry> entries = new Dictionary<string, Entry>();
         static readonly double MsPerTick = 1000.0 / Stopwatch.Frequency;
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+        static readonly bool Alloc = HuntFlags.Value(ProbeFiles.Args, "-hunt-prof") == "alloc";
 
         // True once an instrumented method has run: the build has the profiler in.
         internal static bool Active { get { return entries.Count > 0; } }
 
         public static long Enter()
         {
-            return Stopwatch.GetTimestamp();
+            return Alloc ? Gc.Allocated() : Stopwatch.GetTimestamp();
         }
 
         public static void Exit(string name, long start)
         {
-            long elapsed = Stopwatch.GetTimestamp() - start;
+            long spent = Enter() - start;
             Entry entry;
             if (!entries.TryGetValue(name, out entry)) entries[name] = entry = new Entry();
-            entry.ticks += elapsed;
+            entry.sum += spent;
             entry.calls++;
         }
 
         // "HUNT_PROF <frames> frames: Main.Update 9.81 ms (1), Game.FrameEvent 8.02 ms (1), ..." for the top
-        // methods by time per frame since the last report, then starts again.
+        // methods by time per frame since the last report (KB per frame with -hunt-prof alloc), then starts again.
         internal static string Report(int frames, int top = 14)
         {
             if (frames <= 0 || entries.Count == 0) return null;
             var line = new StringBuilder("HUNT_PROF " + frames + " frames:");
-            foreach (KeyValuePair<string, Entry> pair in entries.OrderByDescending(p => p.Value.ticks).Take(top))
+            foreach (KeyValuePair<string, Entry> pair in entries.OrderByDescending(p => p.Value.sum).Take(top))
             {
-                if (pair.Value.ticks == 0) break;
+                if (pair.Value.sum == 0) break;
                 line.Append(' ').Append(pair.Key).Append(' ')
-                    .Append((pair.Value.ticks * MsPerTick / frames).ToString("F2", Inv)).Append(" ms (")
+                    .Append((pair.Value.sum * (Alloc ? 1 / 1024.0 : MsPerTick) / frames).ToString("F2", Inv)).Append(Alloc ? " KB (" : " ms (")
                     .Append(((double)pair.Value.calls / frames).ToString("F0", Inv)).Append("),");
             }
             foreach (Entry entry in entries.Values)
             {
-                entry.ticks = 0;
+                entry.sum = 0;
                 entry.calls = 0;
             }
             return line.ToString().TrimEnd(',');

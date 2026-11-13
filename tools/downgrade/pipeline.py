@@ -346,6 +346,7 @@ COMPAT_SOURCES = [
             'Clips',
             'Prof',
             'Debris',
+            'Gc',
         )
     ),
 ]
