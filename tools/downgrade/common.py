@@ -159,6 +159,29 @@ def editor_exe(version):
     return editor_folder(version) / 'Unity.exe'
 
 
+def memory_gb():
+    """(total, available) physical memory in GB."""
+    import ctypes
+
+    class Status(ctypes.Structure):
+        _fields_ = [
+            ('dwLength', ctypes.c_ulong),
+            ('dwMemoryLoad', ctypes.c_ulong),
+            ('ullTotalPhys', ctypes.c_ulonglong),
+            ('ullAvailPhys', ctypes.c_ulonglong),
+            ('ullTotalPageFile', ctypes.c_ulonglong),
+            ('ullAvailPageFile', ctypes.c_ulonglong),
+            ('ullTotalVirtual', ctypes.c_ulonglong),
+            ('ullAvailVirtual', ctypes.c_ulonglong),
+            ('ullAvailExtendedVirtual', ctypes.c_ulonglong),
+        ]
+
+    status = Status()
+    status.dwLength = ctypes.sizeof(Status)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+    return status.ullTotalPhys / 2**30, status.ullAvailPhys / 2**30
+
+
 def download(url, destination: Path, digest: str | None):
     """Download url to destination and check its hash: SHA-256, SHA-1 for a 40-digit pin (archive.org
     lists only SHA-1 and MD5 for an item's files) or SHA-512 for a 128-digit one (Microsoft lists only

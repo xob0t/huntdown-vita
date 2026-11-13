@@ -90,3 +90,8 @@ ignore = [
     "TRY003",   # messages in exception calls
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# The builder's class builders and hooks share one signature, (build, file_name, guid, file_id, asset), and
+# use what they need of it; its caches (pickle) and YAML (BaseLoader, strings only) are its own files; its
+# check scripts count what UnityPy can't read instead of stopping.
+"tools/builder/*" = ["ARG001", "ARG002", "ARG005", "S301", "S314", "S506", "BLE001", "S112"]

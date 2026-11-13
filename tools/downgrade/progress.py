@@ -38,6 +38,7 @@ POLL_SECONDS = 0.5  # how often following() reads the log
 TAIL_BYTES = 4096  # how much of the log's end last_line() reads
 
 _progress = None  # the display shown, if any
+NAME_WIDTH = 34  # written(): sharedassets59.assets.resS and Resources/unity_builtin_extra fit
 
 
 class _Count(ProgressColumn):
@@ -189,3 +190,19 @@ def fail(text):
     """Stop with text, in red, on stderr (as sys.exit(text) would, without the color)."""
     errors.print(Text(text, 'bold red'))
     sys.exit(1)
+
+
+def written(name, size, seconds=None, note='', missing=None):
+    """The line for a file the build wrote: its size, how long it took, the --compare result and
+    the classes it lacks ({class ID: objects}) because they cannot be built yet."""
+    line = Text(f'{name:<{NAME_WIDTH}} {size:>12,} bytes')
+    if seconds is not None:
+        line.append(f'  {seconds:6.1f} s', 'dim')
+    elif note or missing:
+        line.append(' ' * 10)  # where the time would be, so the notes line up
+    if note:
+        style = 'green' if note == 'identical' else 'yellow'
+        line.append(f'  {note}', style)
+    if missing:
+        line.append(f'  not built yet: {dict(missing)}', 'red')
+    console.print(line)

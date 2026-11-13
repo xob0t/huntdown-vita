@@ -20,6 +20,9 @@ sprite in its texture's importer settings, but three things there differ from th
   triangle, which the editor's import triangulates back into the same triangles.
 - A few rects (LevelsArea1's map, 1015 pixels wide in the export, 1024 in the game), set to the game's.
 
+Physics shapes go: Huntdown has no 2D colliders, and the editor's import traced one from the alpha for every
+sprite (spriteGenerateFallbackPhysicsShape) and kept the export's outlines of some (physicsShape).
+
 Single sprites (a texture that is one sprite: the levels' 1024x512 scenery pieces, backgrounds) get the game's
 mesh and pivot too. The export moved the pivots of 69 of the 283 when the picture has see-through edges: level 1-1's
 second piece was drawn 290 pixels low, and the ground vanished a few screens to the right.
@@ -60,6 +63,8 @@ SPRITE_RECT = re.compile(
     r'        x: (\S+)\n        y: (\S+)\n        width: (\S+)\n        height: (\S+)\n',
     re.MULTILINE,
 )
+FALLBACK_SHAPE = re.compile(r'^  spriteGenerateFallbackPhysicsShape: 1$', re.MULTILINE)
+PHYSICS_SHAPE = re.compile(r'^( +)physicsShape:\n(?:\1(?:- |  ).*\n)*', re.MULTILINE)
 REFERENCE = re.compile(r'fileID: (\d+), guid: ([0-9a-f]{32})')
 
 
@@ -183,6 +188,12 @@ def mesh_outline(rect, triangles, indent='      '):
     return ''.join(lines) if len(lines) > 1 else f'{indent}outline: []\n'
 
 
+def no_physics(text: str):
+    """text with no physics shapes: no fallback traced from the alpha, and each listed one empty."""
+    text = FALLBACK_SHAPE.sub('  spriteGenerateFallbackPhysicsShape: 0', text)
+    return PHYSICS_SHAPE.sub(lambda m: f'{m[1]}physicsShape: []\n', text)
+
+
 def single_mesh(text: str, sprite: list):
     """(text with a single sprite's pivot and outline the game's, whether its pivot changed). The export writes
     them off when the picture has see-through edges: level 1-1's second scenery piece (1024x512, see-through at
@@ -242,16 +253,19 @@ def sprite_overlay(exported: Path, game: Path, overlay: dict):
         if stat is None or relative.suffix != '.meta' or relative.suffixes[-2:-1] != ['.png']:
             continue
         path = Path('Assets') / relative
-        text = original = current_text(exported, overlay, path)
+        original = current_text(exported, overlay, path)
+        text = no_physics(original)
         sprites = sheets.get(sheet_key(relative.with_suffix('')), [])
         if SINGLE_MODE.search(text):
             if len(sprites) == 1 and '    sprites: []\n' in text:
                 text, moved = single_mesh(text, sprites[0])
                 singles, pivots = singles + 1, pivots + moved
-                if text != original:
-                    result[path] = text.encode('utf-8')
+            if text != original:
+                result[path] = text.encode('utf-8')
             continue
         if '    sprites:\n    - ' not in text:
+            if text != original:
+                result[path] = text.encode('utf-8')
             continue
         order = [sprite[0] for sprite in sprites]
         names = [unquoted(m[1]) for m in SPRITE_BLOCK.finditer((SPRITE_LIST.search(text) or [None, ''])[1])]
