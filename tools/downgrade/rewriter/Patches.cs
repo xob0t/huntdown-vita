@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -166,6 +167,61 @@ partial class DowngradeAssemblies
             Instruction.Create(OpCodes.Call, CompatMethod(module, "LevelJump", "Level")),
             Instruction.Create(OpCodes.Starg, level));
         return 1;
+    }
+
+    // FlyingObjects' constructor sets its debris pool's size (debrisIdleLength = 256); the value goes through
+    // HuntCompat Debris.Pool first, which keeps fewer pieces on the PS Vita (compat/Debris.cs).
+    static int PatchDebrisPool(ModuleDefinition module)
+    {
+        TypeDefinition flying = GameType(module, "FlyingObjects");
+        if (flying == null) return 0;
+        FieldDefinition length = flying.Fields.Single(f => f.Name == "debrisIdleLength");
+        MethodReference pool = CompatMethod(module, "Debris", "Pool");
+        int count = 0;
+        foreach (MethodDefinition constructor in flying.Methods.Where(m => m.IsConstructor && m.HasBody))
+        {
+            ILProcessor il = constructor.Body.GetILProcessor();
+            foreach (Instruction store in constructor.Body.Instructions
+                         .Where(i => i.OpCode == OpCodes.Stfld && i.Operand is FieldReference && ((FieldReference)i.Operand).Resolve() == length).ToList())
+            {
+                il.InsertBefore(store, Instruction.Create(OpCodes.Call, pool));
+                count++;
+            }
+        }
+        if (count != 1) throw new InvalidOperationException("FlyingObjects: " + count + " stores of debrisIdleLength in its constructor, not 1");
+        return count;
+    }
+
+    // Under the build switch HUNT_PROF=1 (common.BUILD_SWITCHES, a code switch), every void FrameEvent, Update,
+    // LateUpdate and FixedUpdate of the game's classes runs between HuntCompat Prof.Enter and Prof.Exit (its
+    // "Class.Method" name, the start): the start goes in a new local, and the Exit call goes before each ret,
+    // where branches to the ret now land (BeforeRets; compat/Prof.cs). Off, nothing changes.
+    static readonly HashSet<string> ProfiledMethods = new HashSet<string> { "FrameEvent", "Update", "LateUpdate", "FixedUpdate" };
+
+    static int ProfileFrameMethods(ModuleDefinition module)
+    {
+        MethodReference enter = CompatMethod(module, "Prof", "Enter");
+        MethodReference exit = CompatMethod(module, "Prof", "Exit");
+        int count = 0;
+        foreach (TypeDefinition type in AllTypes(module.Types))
+            foreach (MethodDefinition method in type.Methods)
+            {
+                if (!method.HasBody || method.IsStatic || method.Parameters.Count != 0 || !ProfiledMethods.Contains(method.Name) ||
+                    method.ReturnType.FullName != "System.Void")
+                    continue;
+                var start = new VariableDefinition(module.TypeSystem.Int64);
+                method.Body.Variables.Add(start);
+                string name = type.Name + "." + method.Name;
+                BeforeRets(method, () => new[]
+                {
+                    Instruction.Create(OpCodes.Ldstr, name),
+                    Instruction.Create(OpCodes.Ldloc, start),
+                    Instruction.Create(OpCodes.Call, exit),
+                });
+                Prepend(method, Instruction.Create(OpCodes.Call, enter), Instruction.Create(OpCodes.Stloc, start));
+                count++;
+            }
+        return count;
     }
 
     // Every Dictionary<string, AudioClip> indexer read in the game's code (Snd.levelClips["..."]) goes to HuntCompat

@@ -642,6 +642,9 @@ class Switch(NamedTuple):
 # that build and quickcode warn when one differs from what the project or the build had. The editor gets
 # each build switch's value explicitly (unity/BuildUtil.cs: Switch). docs/build.md describes them.
 BUILD_SWITCHES = {
+    # 1: the game's frame methods timed, for HUNT_PROF lines in the log (rewriter ProfileFrameMethods,
+    # compat/Prof.cs). A build to measure with, not to play: each timed call costs a little.
+    'HUNT_PROF': Switch('code', '0 1', '0', '0'),
     # The PS Vita player's graphics jobs, in Media/boot.config (pipeline.boot_config).
     'HUNT_GFX_JOBS': Switch('player', 'on off', 'on', 'on', ('vita',)),
 }

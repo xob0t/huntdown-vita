@@ -81,12 +81,15 @@ partial class DowngradeAssemblies
         public readonly string Group;
         public readonly Scope Scope;
         public readonly Func<ModuleDefinition, int> Run;
+        // A build switch (common.BUILD_SWITCHES) the pass runs under, only when it is 1; null: always.
+        public readonly string Switch;
 
-        public Pass(string group, Scope scope, Func<ModuleDefinition, int> run)
+        public Pass(string group, Scope scope, Func<ModuleDefinition, int> run, string buildSwitch = null)
         {
             Group = group;
             Scope = scope;
             Run = run;
+            Switch = buildSwitch;
         }
 
         public string Name { get { return Run.Method.Name; } }
@@ -109,6 +112,8 @@ partial class DowngradeAssemblies
         new Pass("patches", Scope.Game, PatchViewSize),
         new Pass("patches", Scope.Game, PatchLevelJump),
         new Pass("patches", Scope.Game, RouteClipLookups),
+        new Pass("patches", Scope.Game, PatchDebrisPool),
+        new Pass("patches", Scope.Game, ProfileFrameMethods, "HUNT_PROF"),
         new Pass("patches", Scope.Game, RouteResourceLoads),
     };
 
@@ -369,6 +374,7 @@ partial class DowngradeAssemblies
         foreach (Pass pass in Passes)
         {
             if (pass.Scope == Scope.Game && !IsGameAssembly(module)) continue;
+            if (pass.Switch != null && Environment.GetEnvironmentVariable(pass.Switch) != "1") continue;
             int sites = pass.Run(module);
             Count("pass " + pass.Name, sites);
             if (!lines.ContainsKey(pass.Group))

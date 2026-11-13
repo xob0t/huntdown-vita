@@ -42,6 +42,8 @@ Frame rate:
 
 - The game's automatic frame rate (60 fps, down to its 30 fps mode after slow frames, back to 60 whenever the menu starts) kept switching on the PS Vita, with a freeze at each switch: load hitches tripped it. On the PS Vita the mode is fixed at 60 fps, paced by vsync, or 30 if the player chooses it in the options (`compat/FrameRate.cs`, `rewriter/Patches.cs`).
 
+- The game keeps 128 debris pieces on the PS Vita instead of 256 (`compat/Debris.cs`). Explosions and breaking glass throw as many as before; when the pool is full the game reuses the oldest piece, as it does at 256, so old shards on the ground go sooner. The engine spends about 50 us a frame on each visible sprite there: at Sweet Angel's arena in level 1-1, 240 pieces on screen took the frame rate down to 41-52 fps, with the game's own code at 3 ms of the frame. It now holds 60.
+
 - The game's view is the full 480x270 game pixels at 2 screen pixels each: the game's own scale, ceil(544 / 270), was 3 on the PS Vita, which showed 320x181 and looked zoomed in (`compat/View.cs`).
 - The opening cutscene's and the menus' sprite sheets (19 sheets, 840 sprites, about 10 MB uncompressed) are read while the screen is still black at startup, which lasts about 5 s longer: read as each screen opened, they stalled a frame for up to 1.3 s on the PS Vita. Reading them on the loading thread instead made the game's own synchronous loads wait for them (`compat/Preload.cs`). `compat/LoadTimer.cs` logs every Resources load of 30 ms or more (HUNT_LOADTIME).
 
@@ -57,5 +59,6 @@ Input:
 - Loading a level takes about 15 s on the PS Vita: 9 s of its sheets, read synchronously (the loading screen at 1 to 10 fps), then 5 s of its sound bundles, one after the other.
 - The main menu offers EXIT GAME, a PC option.
 - On the PS Vita the cutscene, title and menus hold 60 fps, with frames of 50-60 ms when a screen opens, and one frame of about 0.12 s each when the global sound bundle (at the splash) and the title's level sound bundles finish loading.
+- About once a minute in a level, the garbage collector stops the game for about 0.2 s: IL2CPP's collector goes through the whole 20-24 MB managed heap (HEARTBEAT gc=1, heapMB down by about 4 MB).
 - The black screen at startup is about 10 s: 4.8 s of the game's own loading and 5 s of the sheets read ahead.
 - The levels' sheets are uncompressed and fill the PS Vita's video memory (CDRAM, 5 to 8 MB free in a level, from 64 MB at the title); the rest goes to main memory, of which 165 MB or more stay free in every level tried.

@@ -37,9 +37,12 @@ namespace HuntCompat
             "-hunt-shots <s> <prefix> [after]  a screenshot every s seconds, <prefix>-<seconds>.png, from after seconds on (default 0),\n" +
             "                         for what a run shows over time (each takes ~0.6 s on the PS Vita)\n" +
             "-hunt-no-vsync           vSyncCount 0 and no frame cap, for unsynchronized frame times\n" +
+            "-hunt-visible-top        with -hunt-heartbeat, the visible renderers by name and sorting layer (HUNT_VISIBLE)\n" +
             "-hunt-mute               no sound (AudioListener.volume 0, kept there), for test runs on a PC in use\n" +
             "-hunt-stall-dump <s>     crash the player when a frame has taken s seconds, for a core dump with the main thread's stack\n" +
             "-hunt-stall-after <t>    with -hunt-stall-dump, only frames that start t seconds or more after startup (skips earlier stalls)\n" +
+            "-hunt-stall-from render  with -hunt-stall-dump, time from just before the engine renders (Application.onBeforeRender), not\n" +
+            "                         from Diag's Update: a dump some ms later samples the rendering, not the next frame's scripts\n" +
             "-hunt-find <regex> <s>   s seconds after each scene load, log every renderer (active or not) whose hierarchy path matches\n" +
             "                         the regex: active, enabled, isVisible, bounds, mesh, materials and shaders (HUNT_FIND), for\n" +
             "                         what looks missing in play";
@@ -49,7 +52,7 @@ namespace HuntCompat
         static float heartbeat, quitAfter = -1f, shotAfter = -1f;
         static string shotPath, shotsPrefix;
         static float shotsEvery = -1f, lastShots, shotsAfter;
-        static bool noVsync, mute;
+        static bool noVsync, mute, visibleTop;
         static System.Text.RegularExpressions.Regex findPattern;
         static float findAfter = -1f;
         static float stallDump = -1f, stallAfter;
@@ -94,6 +97,7 @@ namespace HuntCompat
             shotsPrefix = HuntFlags.Word(args, "-hunt-shots", 2);
             shotsAfter = HuntFlags.NumberAt(args, "-hunt-shots", 3, 0f);
             noVsync = HuntFlags.Has(args, "-hunt-no-vsync");
+            visibleTop = HuntFlags.Has(args, "-hunt-visible-top");
             mute = HuntFlags.Has(args, "-hunt-mute");
             if (mute) AudioListener.volume = 0f;
             string find = HuntFlags.Value(args, "-hunt-find");
@@ -105,6 +109,8 @@ namespace HuntCompat
             stallDump = HuntFlags.Number(args, "-hunt-stall-dump", -1f);
             stallAfter = HuntFlags.Number(args, "-hunt-stall-after", 0f);
             if (stallDump > 0f) new System.Threading.Thread(WatchForStall) { IsBackground = true, Name = "HuntStallWatch" }.Start();
+            stallFromRender = HuntFlags.Value(args, "-hunt-stall-from") == "render";
+            if (stallFromRender) Application.onBeforeRender += MarkFrameStart;
             if (HuntFlags.Has(args, "-hunt-help")) Debug.Log("HUNT_DIAG flags:\n" + Help);
             var probe = new GameObject("HuntDiag");
             DontDestroyOnLoad(probe);
@@ -196,10 +202,17 @@ namespace HuntCompat
             probe = this;
         }
 
-        void Update()
+        static bool stallFromRender;
+
+        static void MarkFrameStart()
         {
             frameStartTime = Time.realtimeSinceStartup;
             System.Threading.Interlocked.Exchange(ref frameStartTicks, clock.ElapsedTicks);
+        }
+
+        void Update()
+        {
+            if (!stallFromRender) MarkFrameStart();
             if (mute) AudioListener.volume = 0f;  // the game sets it from its sound settings
             if (noVsync)
             {
@@ -297,11 +310,19 @@ namespace HuntCompat
                 lights.TryGetValue(light.type, out count);
                 lights[light.type] = count + 1;
             }
+            var visibleByName = visibleTop ? new Dictionary<string, int>() : null;
             foreach (Renderer renderer in FindObjectsOfType<Renderer>())
             {
                 if (!renderer.enabled) continue;
                 renderers++;
-                if (renderer.isVisible) visible++;
+                if (!renderer.isVisible) continue;
+                visible++;
+                if (visibleByName == null) continue;
+                // By name, digits dropped ("Enemy12" and "Enemy3" together), with the sorting layer.
+                string key = new string(renderer.name.Where(c => !char.IsDigit(c)).ToArray()).Replace(' ', '_') + "@" + renderer.sortingLayerName;
+                int n;
+                visibleByName.TryGetValue(key, out n);
+                visibleByName[key] = n + 1;
             }
             var line = new StringBuilder("HEARTBEAT");
             line.Append(" t=").Append((now - started).ToString("F1", Inv));
@@ -316,9 +337,23 @@ namespace HuntCompat
             foreach (KeyValuePair<string, MethodInfo> free in FreeMemory)
                 line.Append(' ').Append(free.Key).Append("MB=").Append((Convert.ToInt64(free.Value.Invoke(null, null)) / 1048576.0).ToString("F1", Inv));
             line.Append(" renderers=").Append(renderers).Append(" visible=").Append(visible);
+            // The sources Unity's audio update goes through each frame (AudioManager::Update): all, enabled, playing.
+            int sources = 0, enabledSources = 0, playing = 0;
+            foreach (AudioSource source in FindObjectsOfType<AudioSource>())
+            {
+                sources++;
+                if (!source.enabled) continue;
+                enabledSources++;
+                if (source.isPlaying) playing++;
+            }
+            line.Append(" audioSources=").Append(sources).Append('/').Append(enabledSources).Append('/').Append(playing);
             line.Append(" lights=").Append(lit);
             foreach (KeyValuePair<LightType, int> pair in lights) line.Append(' ').Append(pair.Key).Append('=').Append(pair.Value);
             Debug.Log(line.ToString());
+            if (visibleByName != null)
+                Debug.Log("HUNT_VISIBLE " + string.Join(" ", visibleByName.OrderByDescending(p => p.Value).Take(16).Select(p => p.Key + "=" + p.Value).ToArray()));
+            string profile = Prof.Report(frames);  // a HUNT_PROF=1 build's timings (compat/Prof.cs)
+            if (profile != null) Debug.Log(profile);
             lastBeat = now;
             frames = 0;
             frameSum = 0;

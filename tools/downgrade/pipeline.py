@@ -344,6 +344,8 @@ COMPAT_SOURCES = [
             'LoadTimer',
             'LevelJump',
             'Clips',
+            'Prof',
+            'Debris',
         )
     ),
 ]

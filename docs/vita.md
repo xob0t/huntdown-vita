@@ -142,6 +142,9 @@ uv run tools/downgrade/vita.py args --
 | `-hunt-no-vsync` | vSyncCount 0 and no frame cap. |
 | `-hunt-mute` | No sound. |
 | `-hunt-stall-dump <s>`, `-hunt-stall-after <t>` | Crash the player when a frame has taken s seconds, ignoring frames that start in the first t seconds. See [Crash dumps](#crash-dumps). |
+| `-hunt-stall-from render` | With `-hunt-stall-dump`, time each frame from just before the engine renders, not from the probe's Update. |
+| `-hunt-visible-top` | With `-hunt-heartbeat`, a HUNT_VISIBLE line of the visible renderers by name (digits dropped) and sorting layer, the most first. It scans every renderer, so its own seconds show frames of 30-40 ms. |
+| `-hunt-debris <n>\|game` | How many debris pieces the game keeps: n, or `game` (256). The PS Vita's default is 128. `compat/Debris.cs`. |
 | `-hunt-find <regex> <s>` | s seconds (default 5) after each scene load, log every renderer whose hierarchy path matches, active or not, with its state, bounds, mesh, materials and shaders (HUNT_FIND). |
 | `-hunt-activate <name> <s>` | s seconds after each scene load, activate every GameObject of that name with its parents. Repeatable. `compat/Video.cs`. |
 | `-hunt-video-log` | Log each playing video's clip, frame and time every second. `compat/Video.cs`. |
@@ -154,6 +157,16 @@ uv run tools/downgrade/vita.py args --
 
 The player also logs, without a flag, each sound the game looks up by a name that isn't loaded, as `HUNT_CLIP_MISSING <name> (<n> clips loaded) at <s> s`, before the game's KeyNotFoundException (`compat/Clips.cs`).
 IL2CPP's stack trace stops at `Dictionary.get_Item`, so that line is what names the sound.
+
+### Where a frame's time goes
+
+A build made with the build switch `HUNT_PROF=1` (`build.py`, or `pipeline.py code` then `quickcode`, with it set) times the game's frame methods: every FrameEvent, Update, LateUpdate and FixedUpdate of its classes.
+Each heartbeat then also logs a HUNT_PROF line: the methods that took the most, in ms per frame, with their calls per frame (`compat/Prof.cs`).
+Times include the calls inside, so `Game.Update` is the game's whole frame; what the heartbeat's `ms=` has beyond it is the engine's (rendering, the sprites' transforms, sound) and the wait for vsync.
+To see what the engine spends that time on, a stall dump some milliseconds into the rendering samples it: `-hunt-stall-dump 0.008 -hunt-stall-from render`.
+Build again without the switch to play: each timed call costs a little.
+
+The CPU clock tells the main thread's limits from the GPU's: `-hunt-cpu-mhz 333` slows a CPU-bound spot, `-hunt-gpu-mhz 166` a GPU-bound one.
 
 ### Screenshots
 
