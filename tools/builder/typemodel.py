@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 import common
-from paths import WORK
+from paths import WORK, progress
 
 SOURCE = Path(__file__).resolve().parent / 'typemodel'
 DOTNET = common.EXTERNAL / 'dotnet' / 'dotnet.exe'
@@ -37,12 +37,7 @@ def generator():
         f'-p:CecilPath={common.mono_cecil()}',
         SOURCE / 'Gen.csproj',
     ]
-    common.log('Building TypeModelGen')
-    # Its output captured: make.py builds it under a step, and it would print through the bars.
-    result = subprocess.run([str(c) for c in command], capture_output=True, text=True, errors='replace', check=False)
-    if result.returncode:
-        tail = (result.stdout + result.stderr).splitlines()[-30:]
-        raise RuntimeError(f'dotnet build of TypeModelGen failed ({result.returncode}):\n' + '\n'.join(tail))
+    progress.run('Building TypeModelGen', command, BUILD / 'build.log')
     stamp.write_text(digest)
     return dll
 
@@ -52,15 +47,21 @@ def models(managed, classes):
     BUILD.mkdir(parents=True, exist_ok=True)
     requests, output = BUILD / 'requests.json', BUILD / 'models.json'
     requests.write_text(json.dumps([{'assembly': a, 'fullname': f} for a, f in sorted(set(classes))]), encoding='utf-8')
-    result = subprocess.run(
-        [str(DOTNET), str(generator()), str(managed), str(requests), str(output)],
+    generator_dll = generator()
+    with progress.step(f'Reading the field models of {len(set(classes))} scripts'):
+        result = run_generator(generator_dll, managed, requests, output)
+    if result.returncode:
+        tail = (result.stdout + result.stderr).splitlines()[-30:]
+        raise RuntimeError(f'TypeModelGen failed ({result.returncode}):\n' + '\n'.join(tail))
+    return {(e['assembly'], e['fullname']): e for e in json.loads(output.read_text(encoding='utf-8'))}
+
+
+def run_generator(generator_dll, managed, requests, output):
+    return subprocess.run(
+        [str(DOTNET), str(generator_dll), str(managed), str(requests), str(output)],
         capture_output=True,  # it writes only its file; anything else (an error) would print through the bars
         text=True,
         errors='replace',
         env={**os.environ, 'DOTNET_ROOT': str(DOTNET.parent)},
         check=False,
     )
-    if result.returncode:
-        tail = (result.stdout + result.stderr).splitlines()[-30:]
-        raise RuntimeError(f'TypeModelGen failed ({result.returncode}):\n' + '\n'.join(tail))
-    return {(e['assembly'], e['fullname']): e for e in json.loads(output.read_text(encoding='utf-8'))}

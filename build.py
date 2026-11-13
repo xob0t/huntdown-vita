@@ -15,6 +15,7 @@ the requirements, the times and the other options.
 """
 
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
@@ -146,9 +147,14 @@ def run_together(group, env):
             process = subprocess.Popen(command, env=env, stdout=out, stderr=subprocess.STDOUT)
         running.append((arguments, log_path, process))
     progress.console.print(f'build.py: {len(running)} builds running side by side')
+    # A step for each build while they run, its output's last line as the note
+    with progress.display(), contextlib.ExitStack() as steps:
+        for arguments, log_path, _ in running:
+            name = ' '.join(a for a in arguments if not a.startswith('-'))
+            steps.enter_context(progress.following(f'pipeline.py {name}', log_path))
+        codes = [process.wait() for _, _, process in running]
     failed = []
-    for arguments, log_path, process in running:
-        code = process.wait()
+    for (arguments, log_path, _), code in zip(running, codes, strict=True):
         lines = log_path.read_text(encoding='utf-8', errors='replace').splitlines()
         progress.console.print(f'\nbuild.py: pipeline.py {" ".join(arguments)} (exit code {code}):')
         progress.console.print('\n'.join(lines[-8:]), markup=False, highlight=False)

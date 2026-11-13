@@ -147,20 +147,22 @@ def rip(game: Path, out: Path, version: str):
             stderr=subprocess.STDOUT,
         )
         try:
-            for _ in range(STARTUP_POLLS):
-                try:
-                    urllib.request.urlopen(base + '/', timeout=2)
-                    break
-                except OSError:
-                    time.sleep(POLL_SECONDS)
-            else:
-                raise RuntimeError('AssetRipper did not start')
+            with progress.step('AssetRipper: starting'):
+                for _ in range(STARTUP_POLLS):
+                    try:
+                        urllib.request.urlopen(base + '/', timeout=2)
+                        break
+                    except OSError:
+                        time.sleep(POLL_SECONDS)
+                else:
+                    raise RuntimeError('AssetRipper did not start')
             post(base, '/Settings/Update', {**RIP_SETTINGS, 'TargetVersion': version})
             settings = urllib.request.urlopen(base + '/Settings/Edit').read().decode()
             if f'name="TargetVersion" value="{version}"' not in settings:
                 raise RuntimeError('AssetRipper rejected the target version setting')
             if out.exists():
-                shutil.rmtree(out)
+                with progress.step('Removing the last export'):
+                    shutil.rmtree(out)
             log(f'Loading {game}')
             with progress.following('AssetRipper: loading', ARTIFACTS / 'assetripper.log'):
                 post(base, '/LoadFolder', {'path': str(game)})
@@ -258,7 +260,7 @@ def compile_csharp(command: list):
     if out.exists() and stamp.exists() and stamp.read_text() == digest.hexdigest():
         return
     stamp.unlink(missing_ok=True)
-    run(command)
+    run(f'Compiling {out.name}', command, f'csc-{out.stem}')
     reproducible_assembly(out)
     stamp.write_text(digest.hexdigest())
 
@@ -436,25 +438,24 @@ def rewrite_assemblies(plugins: Path, out: Path, version: str, platform: str, ro
     log_path = ARTIFACTS / f'rewrite-{version}-{platform}.log'
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     command = [rewriter, plugins, out, compat, ','.join(roots), *references]
-    log(' '.join(str(c) for c in command))
     switches = build_switches(platform, ('code',))
     log('Code switches: ' + describe_switches(switches))
     env = {**os.environ, **switches, 'HUNT_API_VERSION': version}
-    result = subprocess.run([str(c) for c in command], capture_output=True, text=True, env=env, check=False)
-    log_path.write_text(result.stdout + result.stderr, encoding='utf-8')
+    code = progress.run("Rewriting the game's assemblies", command, log_path, env=env, check=False)
+    output = log_path.read_text(encoding='utf-8', errors='replace')
     for name in STUBBED_ON.get(platform, []):
         target = out / f'{name}.dll'
-        if not target.exists() and not result.returncode:
+        if not target.exists() and not code:
             sys.exit(f'No {target.name} to stub among the rewritten assemblies (STUBBED_ON)')
         if target.exists():
             stubbed = target.with_name(target.stem + '.stub.dll')
-            run([WORK / 'bin' / 'StubAssembly.exe', target, stubbed])
+            run(f'Stubbing {target.stem}', [WORK / 'bin' / 'StubAssembly.exe', target, stubbed])
             stubbed.replace(target)
-    problems = [line for line in result.stdout.splitlines() if line.startswith(('UNRESOLVED', 'NO MATCH', 'MISSING'))]
-    if result.returncode and not problems:
-        sys.exit(f'The rewriter failed (exit code {result.returncode}); see {log_path}')
+    problems = [line for line in output.splitlines() if line.startswith(('UNRESOLVED', 'NO MATCH', 'MISSING'))]
+    if code and not problems:
+        sys.exit(f'The rewriter failed (exit code {code}); see {log_path}')
     log(f'Rewrote {len(list(out.glob("*.dll")))} assemblies; {len(problems)} problems (log: {log_path})')
-    return result.returncode
+    return code
 
 
 # ---------------------------------------------------------------- link
@@ -501,12 +502,11 @@ def link_check(version: str, platform: str):
         '--dotnetprofile=unityaot',
     ]
     log_path = ARTIFACTS / f'link-{platform}.log'
-    result = subprocess.run([str(c) for c in command], capture_output=True, text=True, check=False)
-    log_path.write_text(result.stdout + result.stderr, encoding='utf-8')
-    lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
-    log(f'UnityLinker exited {result.returncode}' + (': ' + ' | '.join(lines[:3]) if result.returncode else ''))
-    if result.returncode or platform != 'vita':
-        return result.returncode
+    code = progress.run('UnityLinker', command, log_path, check=False)
+    lines = [line for line in log_path.read_text(encoding='utf-8', errors='replace').splitlines()[2:] if line.strip()]
+    log(f'UnityLinker exited {code}' + (': ' + ' | '.join(lines[:3]) if code else ''))
+    if code or platform != 'vita':
+        return code
     # IL2CPP's conversion to C++ of every method the linker kept (the editor's arguments without the
     # C++ compile): its code generator rejects IL that loads and links (EmptyPointerConstrainedCalls).
     il2cpp = linker.parent / 'il2cpp.exe'
@@ -528,11 +528,15 @@ def link_check(version: str, platform: str):
         *(f'--assembly={dll}' for dll in converted),
         f'--generatedcppdir={staging / "cpp"}',
     ]
-    result = subprocess.run([str(c) for c in command], capture_output=True, text=True, check=False)
-    (ARTIFACTS / f'il2cpp-{platform}.log').write_text(result.stdout + result.stderr, encoding='utf-8')
-    errors = [line for line in (result.stdout + result.stderr).splitlines() if 'error' in line.lower()]
-    log(f'IL2CPP conversion exited {result.returncode}' + (': ' + ' | '.join(errors[:3]) if result.returncode else ''))
-    return result.returncode
+    il2cpp_log = ARTIFACTS / f'il2cpp-{platform}.log'
+    code = progress.run('IL2CPP: converting to C++', command, il2cpp_log, check=False)
+    errors = [
+        line
+        for line in il2cpp_log.read_text(encoding='utf-8', errors='replace').splitlines()
+        if 'error' in line.lower()
+    ]
+    log(f'IL2CPP conversion exited {code}' + (': ' + ' | '.join(errors[:3]) if code else ''))
+    return code
 
 
 # ---------------------------------------------------------------- loadcheck
@@ -559,32 +563,27 @@ def load_check(version: str):
     exe = shutil.copy2(tool, staging / tool.name)
     mono = editor_data(version) / 'MonoBleedingEdge' / 'bin' / 'mono.exe'
     env = {**os.environ, 'MONO_PATH': str(staging), 'MONO_LOG_LEVEL': 'debug', 'MONO_LOG_MASK': 'type'}
-    result = subprocess.run(
-        [str(mono), str(exe), str(staging), *(d.name for d in rewritten)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
     log_path = ARTIFACTS / 'loadcheck.log'
-    log_path.write_text(result.stdout + result.stderr, encoding='utf-8')
+    command = [mono, exe, staging, *(d.name for d in rewritten)]
+    code = progress.run('Loading every type on Mono', command, log_path, env=env, check=False)
+    output = log_path.read_text(encoding='utf-8', errors='replace')
     reasons = sorted(
         {
             line
-            for line in result.stdout.splitlines()
+            for line in output.splitlines()
             if line.startswith('Mono: no implementation') or ('failed' in line.lower() and 'methods failed' not in line)
         }
     )
     failed = 0
-    for line in result.stdout.splitlines():
+    for line in output.splitlines():
         match = re.search(r'(\d+) methods failed', line)
         if match:
             failed += int(match[1])
             log(line)
     for line in reasons[:20]:
         log('  ' + line)
-    if result.returncode:
-        log(f'LoadCheck exited {result.returncode}; see {log_path}')
+    if code:
+        log(f'LoadCheck exited {code}; see {log_path}')
         failed += 1
     return failed
 
@@ -750,14 +749,17 @@ def asset_overlay(exported: Path, game: Path, version: str, platform: str, assem
     bundle_rules.py), in order: a rule reads the files the rules before it changed (asset_rules.current_bytes).
     Returns (overlay, exported paths left out)."""
     overlay, excluded = {}, set()
-    overlay.update(shader_overlay(exported, game, version))
-    with progress.step('Asset rules') as rules:
+    with progress.step('Asset rules', total=9 if platform == 'windows' else 8) as rules:
 
         def run(rule, *args):
             # The rule running, on the step's line: some take minutes on a first build.
             rules.note(rule.__name__.removesuffix('_overlay').replace('_', ' '))
-            return rule(*args)
+            try:
+                return rule(*args)
+            finally:
+                rules.advance()
 
+        overlay.update(run(shader_overlay, exported, game, version))
         overlay.update(run(settings_overlay, exported, platform))
         if platform == 'windows':
             overlay.update(run(native_plugin_overlay, game))
@@ -898,11 +900,13 @@ def build(
     if result.returncode != 0:
         sys.exit(result.returncode)
     check_build_output(output, platform, started, log_path)
-    reproducible_player_data(output / 'Media' if platform == 'vita' else output.parent / f'{output.stem}_Data')
+    with progress.step('Making the player data reproducible'):
+        reproducible_player_data(output / 'Media' if platform == 'vita' else output.parent / f'{output.stem}_Data')
     # What quickcode checks against, written right after the checks: a build that fails later (a native
     # plugin, Ctrl+C) still leaves it with the code stage the editor saved.
     if platform == 'vita' and not scenes:
-        save_code_stage(project, version, log_path, {**inputs, **switch_record(platform)})
+        with progress.step('Saving the code stage for quickcode'):
+            save_code_stage(project, version, log_path, {**inputs, **switch_record(platform)})
     if platform == 'vita':
         native_plugins(output)
         boot_config(output)
@@ -1033,7 +1037,7 @@ def serialized_layout(dlls: list, version: str):
     tool = WORK / 'bin' / 'SerializedLayout.exe'
     compile_csharp([CSC, '/nologo', f'/r:{WORK / "bin" / CECIL.name}', f'/out:{tool}', HERE / 'SerializedLayout.cs'])
     out = WORK / 'bin' / 'serialized-layout.txt'
-    run([tool, out, ';'.join(map(str, folders)), *dlls])
+    run("Reading the assemblies' serialized layout", [tool, out, ';'.join(map(str, folders)), *dlls])
     return out.read_text(encoding='utf-8').splitlines()
 
 
@@ -1202,7 +1206,8 @@ def quick_code(version: str, game: Path, force: bool = False):
 
 
 def replay_code_steps(project, temp, output, rewritten, version, linker_arguments, il2cpp_arguments):
-    shutil.copytree(CODE_STAGE, temp, ignore=shutil.ignore_patterns('linker-xml', LAYOUT, NON_CODE_INPUTS))
+    with progress.step("Restoring the last build's staging area"):
+        shutil.copytree(CODE_STAGE, temp, ignore=shutil.ignore_patterns('linker-xml', LAYOUT, NON_CODE_INPUTS))
     managed = temp / 'StagingArea' / 'Data' / 'Managed'
     for dll in [*rewritten.glob('*.dll'), compat_path('vita')]:
         if not (managed / dll.name).exists():
@@ -1243,13 +1248,20 @@ def replay_code_steps(project, temp, output, rewritten, version, linker_argument
     # The editor runs IL2CPP in the output's folder: its linker flags name ..\..\..\ApplicationInfo.o (in Temp).
     native = temp / 'StagingArea' / 'Data' / 'Native'
     native.mkdir(parents=True, exist_ok=True)
-    with progress.step('IL2CPP: C++ and the module'):
-        result = subprocess.run(
-            f'"{tools / "il2cpp.exe"}" {il2cpp_arguments}', cwd=native, capture_output=True, text=True, check=False
-        )
-    (ARTIFACTS / 'quickcode-il2cpp.log').write_text(result.stdout + result.stderr, encoding='utf-8')
-    if result.returncode:
-        sys.exit(f'IL2CPP failed ({result.returncode}); see {ARTIFACTS / "quickcode-il2cpp.log"}')
+    il2cpp_log = ARTIFACTS / 'quickcode-il2cpp.log'
+    with (
+        il2cpp_log.open('w', encoding='utf-8', errors='replace') as out,
+        progress.following('IL2CPP: C++ and the module', il2cpp_log),
+    ):
+        code = subprocess.run(
+            f'"{tools / "il2cpp.exe"}" {il2cpp_arguments}',
+            cwd=native,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            check=False,
+        ).returncode
+    if code:
+        sys.exit(f'IL2CPP failed ({code}); see {il2cpp_log}')
 
     module = temp / 'StagingArea' / 'Data' / 'Native' / 'Il2CppAssemblies.suprx'
     metadata = next((temp / 'StagingArea').rglob('global-metadata.dat'), None)
@@ -1302,8 +1314,7 @@ def native_plugins(output: Path):
     folder.mkdir(parents=True, exist_ok=True)
     for name, files in NATIVE_PLUGINS.items():
         script = HERE / 'native' / name / 'build.py'
-        if subprocess.run([sys.executable, str(script)], check=False).returncode:
-            sys.exit(f'Building the {name} native plugin failed ({script})')
+        progress.run(f'Native plugin {name}', [sys.executable, script], ARTIFACTS / 'tools' / f'native-{name}.log')
         for file in files:
             shutil.copy2(WORK / 'native' / name / file, folder / file)
     log(f'Native plugins in {folder}: {", ".join(f for files in NATIVE_PLUGINS.values() for f in files)}')

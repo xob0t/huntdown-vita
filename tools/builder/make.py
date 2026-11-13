@@ -3,9 +3,9 @@
     uv run tools/builder/make.py [--out dir] [--vpk]
 
 Lays out the build folder (package.py), writes the serialized data and streams (build.py), builds
-the game code module (il2cpp.py), adds what the pipeline adds to the editor's build (the native
-plugin HuntClock and boot.config's graphics jobs), and with --vpk packages it like the pipeline's
-`package` stage.
+the game code module (il2cpp.py), does what the pipeline does to the editor's build (sorts
+globalgamemanagers' lists and sets its build GUID, adds the native plugin HuntClock and boot.config's
+graphics jobs), and with --vpk packages it like the pipeline's `package` stage.
 """
 
 import argparse
@@ -32,10 +32,11 @@ def make(out):
         data.write_all(build)
         with progress.step('Code module'):
             times = il2cpp.build(out)
-        with progress.step('Native plugins and boot.config'):
-            pipeline = downgrade_pipeline()
-            pipeline.native_plugins(out)
-            pipeline.boot_config(out)
+        pipeline = downgrade_pipeline()
+        with progress.step('Making the player data reproducible'):
+            pipeline.reproducible_player_data(out / 'Media')
+        pipeline.native_plugins(out)
+        pipeline.boot_config(out)
     if times['reused']:
         progress.console.print('Code module: reused, its inputs have not changed')
     else:

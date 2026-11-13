@@ -56,7 +56,10 @@ def uscsandbox():
     for patch in patches:
         apply_patch(patch, repo)
     # No build servers left running: they would hold the SDK's files.
-    run([dotnet, 'build', '-c', 'Release', '--disable-build-servers', repo / 'USCSandbox' / 'USCSandbox.csproj'])
+    run(
+        'Building USCSandbox',
+        [dotnet, 'build', '-c', 'Release', '--disable-build-servers', repo / 'USCSandbox' / 'USCSandbox.csproj'],
+    )
     stamp.write_text(digest)
     return exe
 

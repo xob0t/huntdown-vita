@@ -9,6 +9,7 @@
         ...
     with progress.following('Unity: building', log):  # a tool writing a log: its last line as the note
         subprocess.run(...)
+    progress.run('Compiling the rewriter', [csc, ...], log)  # a tool whose output goes to log, followed
 
 Each step shows a display of its own while it runs; steps inside `with progress.display():` share one,
 so the modules don't need to know who called them. The bars only show on an interactive terminal and
@@ -22,8 +23,10 @@ import contextlib
 import datetime
 import os
 import re
+import subprocess
 import sys
 import threading
+from pathlib import Path
 
 from rich.console import Console
 from rich.markup import escape
@@ -166,6 +169,26 @@ def following(name, log, start=0, pattern=None):
         finally:
             stop.set()
             thread.join()
+
+
+def run(name, command, log, cwd=None, env=None, check=True):
+    """Run a tool under a step called name: its command line, then its output (stdout and stderr), go to
+    log, whose last line is the step's note. check: stop on a failure, with the log's last lines.
+    Returns the exit code."""
+    log = Path(log)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    command = [str(c) for c in command]
+    with open(log, 'w', encoding='utf-8', errors='replace') as out:
+        out.write(subprocess.list2cmdline(command) + '\n\n')
+        out.flush()
+        with following(name, log, start=out.tell()):
+            code = subprocess.run(
+                command, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT, check=False
+            ).returncode
+    if code and check:
+        tail = log.read_text(encoding='utf-8', errors='replace').splitlines()[-15:]
+        fail(f'{name} failed (exit code {code}); the end of {log}:\n' + '\n'.join(tail))
+    return code
 
 
 def last_line(log, start=0):

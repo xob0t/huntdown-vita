@@ -325,7 +325,9 @@ def main():
     parser.add_argument('--only', default='')
     parser.add_argument('--compare', action='store_true')
     args = parser.parse_args()
-    write_all(Build(args.out or paths.OUT), set(filter(None, args.only.split(','))), args.compare)
+    with progress.step('Reading the project'):
+        build = Build(args.out or paths.OUT)
+    write_all(build, set(filter(None, args.only.split(','))), args.compare)
     return 0
 
 

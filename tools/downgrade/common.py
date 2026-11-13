@@ -9,7 +9,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import types
@@ -140,9 +139,11 @@ def log(message):
     progress.console.print(Text.assemble((time.strftime('[%H:%M:%S]'), 'dim'), ' ', str(message)))
 
 
-def run(command):
-    log(' '.join(str(c) for c in command))
-    subprocess.run([str(c) for c in command], check=True)
+def run(name, command, log_name=None):
+    """Run a tool under a progress step called name, its output in artifacts/downgrade/tools/<log_name>.log
+    (default: the tool's own name); stops with the log's end if it fails."""
+    log_path = ARTIFACTS / 'tools' / f'{log_name or Path(str(command[0])).stem}.log'
+    progress.run(name, command, log_path)
 
 
 def editor_folder(version):

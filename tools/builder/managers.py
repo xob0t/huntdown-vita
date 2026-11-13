@@ -35,11 +35,10 @@ import scripts as scriptlib
 import typehash
 import typemodel
 import unityyaml
+from assets import REF
 from layout import BUILTIN_EXTRA, build_scenes
 from paths import EDITOR_DATA, PROJECT, TARGET, WORK
 from placement import DEFAULT_RESOURCES, AssetContext, first_path_id
-
-from assets import REF
 
 GGM = 'globalgamemanagers'
 GGA = 'globalgamemanagers.assets'
@@ -556,8 +555,8 @@ class Managers:
                 self._fids.setdefault(gg, []).append(fid)
         return self._fids[g]
 
-    # RuntimeInitializeOnLoadManager: the classes by name (Huntdown's reference: AssemblyAliases, Diag,
-    # MainThread, ProbeFiles, VideoProbe; The Drifter's port found no order that fit its own).
+    # RuntimeInitializeOnLoadManager: the classes by name, as the pipeline sorts the editor's list
+    # (pipeline.reproducible_player_data; the editor's own order changes from build to build).
     def class_300(self):
         assemblies, namespaces, classes, methods = [], [], [], []
         before, after = [], []

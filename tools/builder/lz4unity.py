@@ -11,11 +11,10 @@ the output decompresses to the same bytes, but isn't Unity's byte for byte.
 
 import ctypes
 import shutil
-import subprocess
 from functools import cache
 
 import lz4.block
-from paths import WORK, common
+from paths import WORK, common, progress
 
 SOURCE = 'https://raw.githubusercontent.com/lz4/lz4/r131/lib/'
 FILES = {
@@ -40,7 +39,7 @@ def library():
             common.download(SOURCE + name, FOLDER / name, digest)
         sources = [str(FOLDER / 'lz4.c'), str(FOLDER / 'lz4hc.c')]
         part = LIBRARY.with_name(LIBRARY.name + '.part')
-        subprocess.run([gcc, '-O2', '-shared', '-o', str(part), *sources], check=True)
+        progress.run('Building LZ4 r131', [gcc, '-O2', '-shared', '-o', part, *sources], WORK / 'lz4-r131.log')
         part.replace(LIBRARY)
     lib = ctypes.CDLL(str(LIBRARY))
     lib.LZ4_compress_HC.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]

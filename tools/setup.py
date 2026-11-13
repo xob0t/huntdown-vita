@@ -192,12 +192,13 @@ class Setup:
             self.say('unigate', 'uv is not on PATH; install it (https://docs.astral.sh/uv/), then run setup again')
             return
         script = download(url, EXTERNAL / 'unigate' / 'unigate.py', sha256)
-        result = subprocess.run(
-            [uv, 'run', '--script', str(script), '--editor', str(unity.parent)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with progress.step('Patching the editor (unigate)'):
+            result = subprocess.run(
+                [uv, 'run', '--script', str(script), '--editor', str(unity.parent)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         if result.returncode:
             print(result.stdout + result.stderr)
             self.notes.append(f'unigate could not patch {unity} (above); close Unity and run setup again')

@@ -2,7 +2,7 @@
 
 The pipeline turns your copy of Huntdown into a Unity 2018.2 project, and the Unity editor builds a PS Vita app or a Windows test player from it.
 The pipeline only reads the game.
-It writes the export and the Unity projects to `work/`, the players and the VPK to `builds/`, and the logs to `artifacts/`.
+It writes the export and the Unity projects to `work/`, the players and the VPK to `builds/`, and the logs to `artifacts/`. Every step shows a bar or a spinner while it runs, with what it is on; the tools it runs (the C# compiler, the rewriter, UnityLinker, IL2CPP, the native plugin's build) write their output to logs, `artifacts/downgrade/tools/` for the small ones, and a step that fails prints its log's last lines.
 Prose here is one sentence per line, so a diff shows only the sentences that changed.
 
 You need Windows 10 or 11 on x64, and Huntdown from Steam.

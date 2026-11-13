@@ -1,5 +1,3 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
-
 # Huntdown Vita
 
 [Huntdown](https://store.steampowered.com/app/598550/) on a PS Vita. A pipeline takes the PC release (Unity 2019.4.13f1) and rebuilds it as a Unity 2018.2 project, since 2018.2 is the last Unity with a Vita build module, then builds that for the Vita. It follows [Crow Country's port](https://github.com/xob0t/crow-country-vita) and [The Drifter's](https://github.com/xob0t/the-drifter-vita), and reuses their tools where they fit.

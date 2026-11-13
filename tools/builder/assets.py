@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 
 import unityyaml
-from paths import PROJECT, WORK
+from paths import PROJECT, WORK, progress
 
 GUID = re.compile(r'guid: ([0-9a-f]{32})')
 REF = re.compile(r'fileID: (-?\d+), guid: ([0-9a-f]{32})')
@@ -87,7 +87,7 @@ class AssetDB:
                 cache = pickle.load(f)
         fresh = {}
         self.by_guid = {}
-        for meta, stamp in walk_metas(project / 'Assets'):
+        for meta, stamp in progress.track(list(walk_metas(project / 'Assets')), "Indexing the project's assets"):
             hit = cache.get(meta)
             a = hit[1] if hit and hit[0] == stamp else self.index(meta)
             fresh[meta] = (stamp, a)
