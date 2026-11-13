@@ -124,6 +124,9 @@ class SerializedWriter:
             node = tree or convert.release_tree(class_id)
             if self.type_trees and types[type_index[key]].tree is None:
                 types[type_index[key]].tree = tree_blob(node)
+            if isinstance(data, bytes):  # written as is: what the player holds is not its whole type tree
+                entries.append(ObjectEntry(path_id, type_index[key], data))
+                continue
             w = EndianBinaryWriter(endian='<')
             write_typetree(data, node, w)
             entries.append(ObjectEntry(path_id, type_index[key], w.bytes))

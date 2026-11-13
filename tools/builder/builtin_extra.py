@@ -29,7 +29,7 @@ from functools import cache
 
 import convert
 import editor_settings
-import lz4.block
+import lz4unity
 import psp2cgc
 import shader_object as so
 import unityyaml
@@ -202,7 +202,7 @@ class Builder:
                     continue
                 self.programs(ps, snippet, records)
         raw = assemble_blob(records)
-        compressed = lz4.block.compress(raw, mode='high_compression', compression=9, store_size=False)
+        compressed = lz4unity.compress(raw, 9)
         return {
             'm_Name': '',
             'm_ParsedForm': form,

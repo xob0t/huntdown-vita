@@ -5,8 +5,8 @@ YAML objects reference what their fields name, minus the editor's prefab links; 
 states and transitions stay in the editor, so an AnimatorController references what they do (its
 clips and state machine behaviours). Imported files reference their sub-objects as their importer
 makes them (a sprite its texture, a font its material, texture and fallback fonts, the font
-material Unity's font shader and the font texture). Project shaders reference nothing in this
-build. Built-in objects reference what their copies in Unity's files do.
+material Unity's font shader and the font texture). Project shaders reference the built-in
+shaders they fall back to. Built-in objects reference what their copies in Unity's files do.
 """
 
 import contextlib
@@ -82,6 +82,18 @@ class Graph:
         f, pid = self.placement.find(guid, fid)
         return (f, pid) if f and pid else None  # None: the build does not write it
 
+    def shader_refs(self, a):
+        """A project shader's references: the built-in shaders its Fallback (or Dependency) names."""
+        from layout import SHADER_USES, builtin_shader_names, shader_by_name
+
+        text = (self.layout.db.project / a.path).read_text(encoding='utf-8', errors='replace')
+        out = []
+        for name in SHADER_USES.findall(text):
+            fid = shader_by_name(name, builtin_shader_names())
+            if fid is not None:
+                out.append((BUILTIN_EXTRA, fid))
+        return out
+
     def asset_refs(self, guid, fid):
         """(guid, fileID) references of a project asset's object."""
         a = self.layout.db.by_guid[guid]
@@ -97,6 +109,8 @@ class Graph:
                 return [(guid, 2100000), (guid, 2800000), *((r['guid'], int(r['fileID'])) for r in fallbacks)]
             if cid == 21 and a.ext in ('.ttf', '.otf'):
                 return [(DEFAULT_RESOURCES, FONT_SHADER), (guid, 2800000)]
+            if cid == 48:
+                return self.shader_refs(a)
             return []
         out, seen, stack = [], {fid}, [fid]
         while stack:

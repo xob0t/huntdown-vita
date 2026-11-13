@@ -50,11 +50,13 @@ EXTENSIONS = EDITOR_DATA / 'UnityExtensions' / 'Unity'
 ENGINE_MODULES = EDITOR_DATA / 'Managed' / 'UnityEngine'
 
 # Path ID of each manager: its slot in the player's manager table + 1. Slot 15 is
-# ClusterInputManager and 17.. UnityConnectSettings and friends, which the PS Vita player lacks.
+# ClusterInputManager, which the PS Vita player lacks. CloudWebServicesManager, UnityAnalyticsManager and
+# UnityConnectSettings (18-20) are there when the project has ProjectSettings/UnityConnectSettings.asset.
 PATH_IDS = {
     129: 1, 13: 2, 78: 3, 11: 4, 94: 5, 116: 6, 30: 7, 5: 8, 98: 9, 55: 10, 141: 11, 47: 12, 147: 13,
-    126: 14, 19: 15, 300: 17, 1403656975: 23,
+    126: 14, 19: 15, 300: 17, 301: 18, 303: 19, 310: 20, 1403656975: 23,
 }  # fmt: skip
+CONNECT_MANAGERS = (301, 303, 310)
 SETTINGS = {
     129: 'ProjectSettings.asset', 13: 'InputManager.asset', 78: 'TagManager.asset', 11: 'AudioManager.asset',
     30: 'GraphicsSettings.asset', 5: 'TimeManager.asset', 98: 'DelayedCallManager.asset',
@@ -354,10 +356,31 @@ class Managers:
 
     def all(self):
         out = []
+        connect = (self.project / 'ProjectSettings' / 'UnityConnectSettings.asset').exists()
         for cid, pid in sorted(PATH_IDS.items(), key=lambda x: x[1]):
+            if cid in CONNECT_MANAGERS and not connect:
+                continue
             build = getattr(self, f'class_{cid}', None)
             out.append((pid, cid, build() if build else self.convert(cid)))
         return out
+
+    # CloudWebServicesManager and UnityAnalyticsManager: no fields
+    def class_301(self):
+        return {}
+
+    def class_303(self):
+        return {}
+
+    # UnityConnectSettings: the player's file holds its fields up to m_TestInitMode only (16 bytes here),
+    # not the services' settings after them in the type tree.
+    def class_310(self):
+        fields = settings('UnityConnectSettings.asset', self.project)
+        out = bytearray(struct.pack('<??xx', fields['m_Enabled'] == '1', fields['m_TestMode'] == '1'))
+        for key in ('m_TestEventUrl', 'm_TestConfigUrl'):
+            text = (fields.get(key) or '').encode()
+            out += struct.pack('<i', len(text)) + text + bytes(-len(text) % 4)
+        out += struct.pack('<i', int(fields.get('m_TestInitMode', 0)))
+        return bytes(out)
 
     # PlayerSettings, as the editor holds them when it builds (editor_settings.py)
     def class_129(self):
@@ -383,12 +406,17 @@ class Managers:
                 'enableLPPV': False,
                 'useHDR': False,
             }
+        # The PS Vita's built-in shader defines, and UNITY_ENABLE_REFLECTION_BUFFERS (bit 3) while deferred
+        # reflections are on (Huntdown's settings; The Drifter's had them off).
+        defines = 71438592
+        if int((fields.get('m_DeferredReflections') or {}).get('m_Mode', 0)) != 0:
+            defines |= 1 << 3
         d['m_ShaderDefinesPerShaderCompiler'] = [
             {
                 'shaderPlatform': 10,
-                'defines_Tier1': [71438592],
-                'defines_Tier2': [71438592],
-                'defines_Tier3': [71438592],
+                'defines_Tier1': [defines],
+                'defines_Tier2': [defines],
+                'defines_Tier3': [defines],
             }
         ]
         return d
@@ -499,27 +527,44 @@ class Managers:
         }
 
     # ResourceManager
+    # m_Container by resource path; under one path, assets in Unity's GUID order (FMVTexture.shader before
+    # FMVTexture.mat), and an asset's main object first, then a YAML asset's others by class and name
+    # (MasterMixer's groups, then its snapshots), an imported one's by path ID (a sheet's sprites in order).
     def class_147(self):
-        container = []
-        for (g, _), (f, pid) in self.placement.where.items():
+        from bundles import unity_guid_order
+
+        entries = []
+        db = self.layout.db
+        for (g, fid), (f, pid) in self.placement.where.items():
             if f == 'resources.assets' and g in self.layout.resources:
-                container.append((resource_key(self.layout.db.by_guid[g].path), ptr(f, pid)))
-        container.sort(key=lambda x: (x[0], x[1]['m_PathID']))
+                a = db.by_guid[g]
+                main = fid == min(self.placement_fids(g))
+                name = a.docs[fid].fields.get('m_Name', '') if a.is_yaml and not main else ''
+                order = (resource_key(a.path), unity_guid_order(g), not main, a.classes.get(fid, 0), name, pid)
+                entries.append((order, (resource_key(a.path), ptr(f, pid))))
+        container = [entry for _, entry in sorted(entries)]
         dependent = []
         for obj, refs in resource_dependencies(self.layout, self.placement):
             dependent.append({'m_Object': obj, 'm_Dependencies': refs})
         return {'m_Container': container, 'm_DependentAssets': dependent}
 
-    # RuntimeInitializeOnLoadManager: the classes in type definition order. The editor's order is
-    # its own (native; no name, token or hash order reproduces it). The set and the load types
-    # match, and docs/builder.md says why the order of Compat's methods does not matter.
+    def placement_fids(self, g):
+        """The fileIDs of an asset's objects the build writes."""
+        if not hasattr(self, '_fids'):
+            self._fids = {}
+            for gg, fid in self.placement.where:
+                self._fids.setdefault(gg, []).append(fid)
+        return self._fids[g]
+
+    # RuntimeInitializeOnLoadManager: the classes by name (Huntdown's reference: AssemblyAliases, Diag,
+    # MainThread, ProbeFiles, VideoProbe; The Drifter's port found no order that fit its own).
     def class_300(self):
         assemblies, namespaces, classes, methods = [], [], [], []
         before, after = [], []
         for dll in dlls(self.project):
             if dll.kind != USER:
                 continue
-            for ty in assembly(dll.path, self.project).types:
+            for ty in sorted(assembly(dll.path, self.project).types, key=lambda t: t.name):
                 found = [(m, v) for m in ty.methods for n, v in m.attributes if n == RUNTIME_INITIALIZE]
                 if not found:
                     continue

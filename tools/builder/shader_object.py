@@ -36,7 +36,7 @@ from functools import cache
 from pathlib import Path
 
 import editor_settings
-import lz4.block
+import lz4unity
 import psp2cgc
 import shader_bindings as bindings
 from gxp import params as gxp_params
@@ -1140,7 +1140,7 @@ def build(source, options, registry, pool):
         subshaders.append({'m_Passes': passes, 'm_Tags': {'tags': sub_tags}, 'm_LOD': sub.lod})
 
     raw = assemble_blob(records)
-    compressed = lz4.block.compress(raw, mode='high_compression', compression=9, store_size=False)
+    compressed = lz4unity.compress(raw, 9)
     dependency = options.dependency or (lambda name: None)
     deps = []
     for name in [source.fallback] + [to for _, to in source.dependencies]:

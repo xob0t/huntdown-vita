@@ -27,6 +27,7 @@ import struct
 from pathlib import Path
 
 import lz4.block
+import lz4unity
 import paths
 from Crypto.Hash import MD4
 from layout import BUILTIN_EXTRA, EDITOR_ONLY, builtin_extra
@@ -252,7 +253,7 @@ def unityfs(files, engine=paths.TARGET):
     blocks, compressed = [], []
     for at in range(0, len(data), BLOCK_SIZE):
         raw = data[at : at + BLOCK_SIZE]
-        packed = lz4.block.compress(raw, mode='high_compression', compression=9, store_size=False)
+        packed = lz4unity.compress(raw, 16)
         blocks.append((len(raw), len(packed)))
         compressed.append(packed)
     info = EndianBinaryWriter(endian='>')
@@ -271,7 +272,7 @@ def unityfs(files, engine=paths.TARGET):
         info.write_string_to_null(name)
         offset += len(d)
     info_raw = info.bytes
-    info_packed = lz4.block.compress(info_raw, mode='high_compression', compression=9, store_size=False)
+    info_packed = lz4unity.compress(info_raw, 16)
     header = EndianBinaryWriter(endian='>')
     header.write_string_to_null('UnityFS')
     header.write_u_int(6)

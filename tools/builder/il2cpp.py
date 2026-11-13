@@ -352,7 +352,10 @@ def gather(project=paths.PROJECT):
     libraries, todo = {}, [load(p) for p in plugins + extensions + engine]
     while todo:
         for ref in todo.pop().references:
+            # netstandard (Rewired_Core references it) and what it forwards to are facades
             path = CLASS_LIBRARIES / f'{ref}.dll'
+            if not path.exists():
+                path = CLASS_LIBRARIES / 'Facades' / f'{ref}.dll'
             if ref in known or ref in libraries or not path.exists():
                 continue
             libraries[ref] = path

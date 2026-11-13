@@ -88,6 +88,9 @@ def check_managers(objects, show):
         if o is None or o.class_id != cid:
             print(f'  {pid} class {cid}: no reference object')
             continue
+        if isinstance(mine, bytes):  # written as is (UnityConnectSettings): compare the bytes
+            print(f'  {pid} {o.type.name}: {"same bytes" if mine == o.get_raw_data() else "bytes differ"}')
+            continue
         theirs = o.read_typetree()
         diffs = []
         same(mine, theirs, '', diffs, externals, managers.GGM)
