@@ -77,6 +77,8 @@ namespace HuntCompat
             Guard("Clock", Clock.Install);
             Guard("Preload", Preload.Start);  // the menus' sheets read ahead (Preload.cs; PS Vita default)
             Guard("Gc", Gc.Install);  // the garbage collector held for safe points (Gc.cs; PS Vita default)
+            Guard("Phases", Phases.Install);  // -hunt-phases: the player loop's steps timed (Phases.cs)
+            Guard("RewiredTrim", RewiredTrim.Install);  // -hunt-rewired: Rewired's keyboard and mouse (RewiredTrim.cs)
             // -hunt-load-priority low|belownormal|normal|high: the main thread's time per frame for finishing
             // asynchronous loads (Application.backgroundLoadingPriority; an experiment, the game's own unless given).
             Guard("LoadPriority", a =>
@@ -420,6 +422,8 @@ namespace HuntCompat
                     .Select(p => p.Key + "=" + p.Value.ToString("F2", Inv)).ToArray()));
             string profile = Prof.Report(frames);  // a HUNT_PROF=1 build's timings (compat/Prof.cs)
             if (profile != null) Debug.Log(profile);
+            string phases = Phases.Report(frames);  // -hunt-phases (compat/Phases.cs)
+            if (phases != null) Debug.Log(phases);
             lastBeat = now;
             frames = 0;
             frameSum = 0;

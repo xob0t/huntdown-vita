@@ -149,6 +149,9 @@ uv run tools/downgrade/vita.py args --
 | `-hunt-gc game\|held` | When the garbage collector runs: `game`, its own timing (about every 60 s in a level, a 0.2 s stop); `held`, the PS Vita's default, at level starts and checkpoint restarts, at the pause menu, and at the cap. Each collection held logs a HUNT_GC line with its time. `compat/Gc.cs`. |
 | `-hunt-gc-cap <MB>` | With the collector held, the garbage that collects anywhere (default 24). `-hunt-gc-cap 1` collects about once a minute in play, to try the path. |
 | `-hunt-prof alloc` | In a `HUNT_PROF=1` build, the HUNT_PROF lines count KB allocated per frame instead of ms. See [Where a frame's time goes](#where-a-frames-time-goes). |
+| `-hunt-phases` | With `-hunt-heartbeat`, a HUNT_PHASES line: the steps of Unity's player loop that took the most, in ms per frame (`Update.ScriptRunBehaviourUpdate`, the scripts' Updates; `Update.ScriptRunDelayedDynamicFrameRate`, coroutines; `PostLateUpdate.FinishFrameRendering`, rendering and, at 60 fps, the wait for vsync). `compat/Phases.cs`. |
+| `-hunt-rewired game\|log\|trim\|pad` | Rewired's controllers. The PS Vita's default disables its keyboard and mouse; `game` leaves them on; `log` logs its controllers (HUNT_REWIRED); `trim` logs and disables; `pad` also disables the joysticks without a name. `compat/RewiredTrim.cs`. |
+| `-hunt-rewired-axes all` | Rewired reads every axis of every joystick slot, as the game does. The PS Vita's default reads the first 8 axes of the slots with a pad in them. `compat/RewiredInput.cs`. |
 | `-hunt-find <regex> <s>` | s seconds (default 5) after each scene load, log every renderer whose hierarchy path matches, active or not, with its state, bounds, mesh, materials and shaders (HUNT_FIND). |
 | `-hunt-activate <name> <s>` | s seconds after each scene load, activate every GameObject of that name with its parents. Repeatable. `compat/Video.cs`. |
 | `-hunt-video-log` | Log each playing video's clip, frame and time every second. `compat/Video.cs`. |
@@ -164,7 +167,7 @@ IL2CPP's stack trace stops at `Dictionary.get_Item`, so that line is what names 
 
 ### Where a frame's time goes
 
-A build made with the build switch `HUNT_PROF=1` (`build.py`, or `pipeline.py code` then `quickcode`, with it set) times the game's frame methods: every FrameEvent, Update, LateUpdate and FixedUpdate of its classes.
+A build made with the build switch `HUNT_PROF=1` (`build.py`, or `pipeline.py code` then `quickcode`, with it set) times the frame methods of the game's and Rewired's assemblies: every FrameEvent, Update, LateUpdate and FixedUpdate, and each step of a coroutine (as `Type.Name()`) of its classes.
 Each heartbeat then also logs a HUNT_PROF line: the methods that took the most, in ms per frame, with their calls per frame (`compat/Prof.cs`).
 Times include the calls inside, so `Game.Update` is the game's whole frame; what the heartbeat's `ms=` has beyond it is the engine's (rendering, the sprites' transforms, sound) and the wait for vsync.
 To see what the engine spends that time on, a stall dump some milliseconds into the rendering samples it: `-hunt-stall-dump 0.008 -hunt-stall-from render`.

@@ -35,6 +35,29 @@ partial class DowngradeAssemblies
         return platforms + backends;
     }
 
+    // Rewired's UnityInputHelper.GetJoystickAxisValueByJoystickId and GetJoystickAxisRawValueByJoystickId(joystick, axis)
+    // return 0 at once for a Unity joystick slot with no pad in it, or an axis the PS Vita's pad doesn't have (HuntCompat
+    // RewiredInput.Polled; compat/RewiredInput.cs):
+    // each read is an Input.GetAxis by name ("Joy3Axis17"), which Unity looks up among the game's 552 axes, and Rewired
+    // reads every axis of all four slots the PS Vita reports each frame.
+    static int SkipEmptyJoystickAxes(ModuleDefinition module)
+    {
+        TypeDefinition helper = module.GetType("Rewired.UnityInputHelper");
+        if (helper == null) return 0;
+        MethodReference polled = CompatMethod(module, "RewiredInput", "Polled");
+        int count = 0;
+        foreach (MethodDefinition method in helper.Methods.Where(m =>
+                     (m.Name == "GetJoystickAxisValueByJoystickId" || m.Name == "GetJoystickAxisRawValueByJoystickId") && m.Parameters.Count == 2))
+        {
+            Instruction first = method.Body.Instructions[0];
+            Prepend(method, Instruction.Create(OpCodes.Ldarg_0), Instruction.Create(OpCodes.Ldarg_1), Instruction.Create(OpCodes.Call, polled), Instruction.Create(OpCodes.Brtrue, first),
+                    Instruction.Create(OpCodes.Ldc_R4, 0f), Instruction.Create(OpCodes.Ret));
+            count++;
+        }
+        if (count != 2) throw new InvalidOperationException("Rewired.UnityInputHelper: " + count + " joystick axis readers, not 2");
+        return count;
+    }
+
     // Analytics.LoginWith and LoginWithXbox (coroutines the game starts at launch) return HuntCompat
     // Offline.Nothing instead: no request goes to the developer's stats server, Analytics.isOK stays false,
     // and every other report, which checks it, is skipped (compat/Offline.cs).
@@ -237,12 +260,18 @@ partial class DowngradeAssemblies
         foreach (TypeDefinition type in AllTypes(module.Types))
             foreach (MethodDefinition method in type.Methods)
             {
-                if (!method.HasBody || method.IsStatic || method.Parameters.Count != 0 || !ProfiledMethods.Contains(method.Name) ||
-                    method.ReturnType.FullName != "System.Void")
+                // A coroutine's step: its iterator's MoveNext (the class the compiler makes, <Name>d__N, nested in the
+                // game's), named as Type.Name(); what Unity's coroutine step (Update.ScriptRunDelayedDynamicFrameRate,
+                // compat/Phases.cs) spends its time on. The value MoveNext returns stays on the stack under Exit's call.
+                bool coroutine = method.Name == "MoveNext" && type.IsNested && type.Name.StartsWith("<") &&
+                                 type.Interfaces.Any(i => i.InterfaceType.FullName == "System.Collections.IEnumerator");
+                if (!method.HasBody || method.IsStatic || method.Parameters.Count != 0 ||
+                    !(coroutine || ProfiledMethods.Contains(method.Name) && method.ReturnType.FullName == "System.Void"))
                     continue;
                 var start = new VariableDefinition(module.TypeSystem.Int64);
                 method.Body.Variables.Add(start);
-                string name = type.Name + "." + method.Name;
+                string name = coroutine ? type.DeclaringType.Name + "." + type.Name.Substring(1, type.Name.IndexOf('>') - 1) + "()"
+                                        : type.Name + "." + method.Name;
                 BeforeRets(method, () => new[]
                 {
                     Instruction.Create(OpCodes.Ldstr, name),

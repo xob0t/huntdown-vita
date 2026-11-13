@@ -351,6 +351,9 @@ COMPAT_SOURCES = [
             'Gc',
             'TouchInput',
             'Fades',
+            'Phases',
+            'RewiredTrim',
+            'RewiredInput',
         )
     ),
 ]
