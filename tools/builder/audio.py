@@ -38,7 +38,7 @@ import numpy as np
 import unityyaml
 from paths import PROJECT, common, progress
 
-HEVAG_FORMAT = 5  # AudioCompressionFormat.HEVAG
+PCM_FORMAT, HEVAG_FORMAT = 0, 5  # AudioCompressionFormat
 PSP2_GROUP = '17'  # BuildTargetGroup.PSP2, the key of the importer's platform override
 JOB_FRAMES = 1 << 20  # channel frames a worker encodes at once
 # Processes that encode the clips. More than 4 hardly help: on an 8-core, 16-thread Ryzen 7 5800X3D
@@ -56,7 +56,8 @@ def settings(meta):
     importer = meta['AudioImporter']
     overrides = importer.get('platformSettingOverrides') or {}
     chosen = overrides.get(PSP2_GROUP) or importer['defaultSettings']
-    out = {k: chosen[k] for k in ('loadType', 'sampleRateSetting', 'sampleRateOverride', 'conversionMode')}
+    keys = ('loadType', 'sampleRateSetting', 'sampleRateOverride', 'conversionMode', 'compressionFormat')
+    out = {k: chosen.get(k, '0') for k in keys}
     for k in ('forceToMono', 'normalize', 'preloadAudioData', 'loadInBackground', 'ambisonic', '3D'):
         out[k] = importer.get(k, '0')
     if out['sampleRateSetting'] != '0' or out['forceToMono'] != '0':
@@ -92,6 +93,13 @@ def length(samples, rate):
     return float(np.float32(samples / out))
 
 
+def is_pcm(importer):
+    """Whether a clip stays PCM: the importer's compressionFormat 0, which the port gives the clips the game
+    reads samples from (AudioClip.GetData; tools/downgrade/asset_rules.py, READ_CLIPS). Every other
+    format the PS Vita's importer records as HEVAG."""
+    return int(importer.get('compressionFormat', HEVAG_FORMAT)) == PCM_FORMAT
+
+
 def fields(name, importer, channels, rate, samples):
     """The AudioClip release dict; m_Resource gets its source and offset from resource_stream."""
     return {
@@ -108,7 +116,7 @@ def fields(name, importer, channels, rate, samples):
         'm_LoadInBackground': importer['loadInBackground'] != '0',
         'm_Legacy3D': importer['3D'] != '0',
         'm_Resource': {'m_Source': '', 'm_Offset': 0, 'm_Size': 0},
-        'm_CompressionFormat': HEVAG_FORMAT,
+        'm_CompressionFormat': PCM_FORMAT if is_pcm(importer) else HEVAG_FORMAT,
     }
 
 
@@ -117,23 +125,27 @@ def clip_name(asset):
 
 
 def _make(jobs):
-    """[(name, source path, importer settings)] -> [(fields, bank)]; many clips encode together."""
+    """[(name, source path, importer settings)] -> [(fields, bank)], in the jobs' order; the HEVAG clips
+    encode together."""
+    made = [None] * len(jobs)
     shapes, stretched = [], []
-    for name, path, importer in jobs:
+    for i, (name, path, importer) in enumerate(jobs):
         pcm, rate = read(path)
-        frames = hevag.frames_for(pcm.shape[1])
-        shapes.append((name, importer, pcm.shape[0], rate, pcm.shape[1], frames))
+        channels, samples = pcm.shape
+        if is_pcm(importer):
+            # 16-bit samples, channels interleaved, as many as the source has: no stretching.
+            data = np.clip(np.round(pcm), -32768, 32767).astype('<i2').T.tobytes()
+            bank = fsb5.bank(name, rate, channels, samples, data, codec=fsb5.CODEC_PCM16)
+            made[i] = (fields(name, importer, channels, rate, samples), bank)
+            continue
+        frames = hevag.frames_for(samples)
+        shapes.append((i, name, importer, channels, rate, samples, frames))
         stretched.append(hevag.stretch(pcm, frames))
-    data = hevag.encode(stretched)
-    out = []
-    for (name, importer, channels, rate, samples, frames), encoded in zip(shapes, data, strict=True):
-        out.append(
-            (
-                fields(name, importer, channels, rate, samples),
-                fsb5.bank(name, rate, channels, frames * hevag.FRAME, encoded),
-            )
-        )
-    return out
+    encoded = hevag.encode(stretched) if stretched else []
+    for (i, name, importer, channels, rate, samples, frames), data in zip(shapes, encoded, strict=True):
+        bank = fsb5.bank(name, rate, channels, frames * hevag.FRAME, data)
+        made[i] = (fields(name, importer, channels, rate, samples), bank)
+    return made
 
 
 def default_workers(jobs):
@@ -245,7 +257,7 @@ def imported(builder, file_name, guid, file_id, asset):
     which is the stream's order. The first clip of a file encodes all of the file's clips at once."""
     cache = builder.__dict__.setdefault('audio_clips', {})
     if file_name not in cache:
-        guids = [g for g, _, cid in builder.layout.objects(file_name) if cid == 83]
+        guids = [g for g, _, cid in builder.objects(file_name) if cid == 83]
         cache[file_name] = dict(zip(guids, build([builder.layout.db.by_guid[g] for g in guids]), strict=True))
     fields, bank = cache[file_name].pop(guid)
     source = resource_name(file_name)

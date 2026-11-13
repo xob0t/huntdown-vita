@@ -19,6 +19,7 @@ import animation
 import audio
 import builtin_copies
 import builtin_extra
+import bundles
 import classes
 import convert
 import imported
@@ -96,6 +97,7 @@ class Build:
         managers.register(self.placement, self.entries)
         self.preloader = preloadlib.Preload(self.layout, self.placement, self.root)
         self.imported = self.IMPORTED
+        self.bundle_objects = {}  # a bundle's file -> its [(guid, fileID, class ID)] (bundles.py)
         self.trees = {}
         version = convert.VERSION
 
@@ -166,36 +168,49 @@ class Build:
         mbs = [db.by_guid[g].docs[fid] for g, fid, cid in objects if cid == 114]
         self.scripts.load_models({self.scripts.resolve(d.fields['m_Script'], d.fields) for d in mbs} - {None})
         for i, (g, fid, cid) in enumerate(progress.track(objects, 'Objects')):
-            a = db.by_guid.get(g)
-            tree, script, data = None, None, None
-            if a is not None and a.is_yaml:
-                doc = a.docs[fid]
-                ctx = AssetContext(self.placement, file_name, g, self.scripts, self.monoscripts)
-                ctx.fields = doc.fields
-                if cid == 74:
-                    data = animation.clip(doc, ctx)
-                elif cid == 91:
-                    data = animation.controller(doc, ctx, a, db)
-                elif cid == 241:
-                    data = mixer.mixer(doc, ctx, a)
-                else:
-                    if cid == 114:
-                        script = self.scripts.resolve(doc.fields['m_Script'], doc.fields)
-                        tree = self.script_tree(script)
-                    data, _ = convert.convert(cid, doc.fields, ctx, tree)
-                    if cid in classes.FIXUPS:
-                        classes.FIXUPS[cid](data, doc, self.project, None)
-                    if cid in classes.ASSET_FIXUPS:
-                        classes.ASSET_FIXUPS[cid](data, doc, a, self.project)
-            elif cid in self.imported:
-                made = self.imported[cid](self, file_name, g, fid, a)
-                if made:
-                    data, tree = made
+            data, tree, script = self.make(file_name, g, fid, cid)
             if data is None:
                 missing[cid] += 1
                 continue
             out.add(start + i, cid, data, tree, script)
         return out.write(self.hashes), missing
+
+    def objects(self, file_name):
+        """[(guid, fileID, class ID)] of the objects a file holds, in path ID order."""
+        if file_name in self.bundle_objects:
+            return self.bundle_objects[file_name]
+        return self.layout.objects(file_name)
+
+    def make(self, file_name, g, fid, cid):
+        """(data, tree, script) of one asset object as file_name holds it (data None: its class can't be
+        built yet). References go through self.placement."""
+        db = self.layout.db
+        a = db.by_guid.get(g)
+        tree, script, data = None, None, None
+        if a is not None and a.is_yaml:
+            doc = a.docs[fid]
+            ctx = AssetContext(self.placement, file_name, g, self.scripts, self.monoscripts)
+            ctx.fields = doc.fields
+            if cid == 74:
+                data = animation.clip(doc, ctx)
+            elif cid == 91:
+                data = animation.controller(doc, ctx, a, db)
+            elif cid == 241:
+                data = mixer.mixer(doc, ctx, a)
+            else:
+                if cid == 114:
+                    script = self.scripts.resolve(doc.fields['m_Script'], doc.fields)
+                    tree = self.script_tree(script)
+                data, _ = convert.convert(cid, doc.fields, ctx, tree)
+                if cid in classes.FIXUPS:
+                    classes.FIXUPS[cid](data, doc, self.project, None)
+                if cid in classes.ASSET_FIXUPS:
+                    classes.ASSET_FIXUPS[cid](data, doc, a, self.project)
+        elif cid in self.imported:
+            made = self.imported[cid](self, file_name, g, fid, a)
+            if made:
+                data, tree = made
+        return data, tree, script
 
     def globalgamemanagers(self):
         out = SerializedWriter('globalgamemanagers', self.target.platform)
@@ -242,6 +257,9 @@ def write_all(build, only=frozenset(), compare_files=False):
     shared = [name for name in build.files if not only or name in only]
     extra, ggm = 'Resources/unity_builtin_extra', 'globalgamemanagers'
     rest = [name for name in (extra, ggm) if not only or name in only]
+    # AssetBundles by their names (levels/1-1), or all of them with StreamingAssets
+    names = bundles.bundle_names(build.layout.db)
+    wanted = sorted(n for n in names if not only or n in only or 'StreamingAssets' in only)
 
     def done(name, data, start, missing=None):
         build.write(name, data)
@@ -249,7 +267,8 @@ def write_all(build, only=frozenset(), compare_files=False):
         progress.written(name, len(data), time.time() - start, note, missing)
         files.advance()
 
-    with progress.display(), progress.step('Data files', total=len(levels) + len(shared) + len(rest)) as files:
+    total = len(levels) + len(shared) + len(rest) + len(wanted)
+    with progress.display(), progress.step('Data files', total=total) as files:
         for i in levels:
             files.note(f'level{i}')
             start = time.time()
@@ -270,6 +289,34 @@ def write_all(build, only=frozenset(), compare_files=False):
             start = time.time()
             done(ggm, build.globalgamemanagers(), start)
         write_streams(build, list(build.streams), compare_files)
+        for name in wanted:
+            files.note(name)
+            start = time.time()
+            inside, missing = bundles.Bundle(build, name, names[name]).files()
+            path = f'StreamingAssets/{name}'
+            build.write(path, bundles.unityfs(inside))
+            note = compare_bundle(path, inside, ref) if compare_files else ''
+            progress.written(path, sum(len(d) for _, d in inside), time.time() - start, note, missing)
+            files.advance()
+        if not only or 'StreamingAssets' in only:
+            copy_streaming_files(build)
+
+
+def compare_bundle(path, inside, reference=paths.REFERENCE_MEDIA):
+    """How a bundle's files compare with the reference bundle's (the bytes inside: LZ4 differs)."""
+    theirs = dict(bundles.read_unityfs((reference / path).read_bytes()))
+    if [n for n, _ in inside] != list(theirs):
+        return f'other files: {[n for n, _ in inside]} vs {list(theirs)}'
+    differ = [n.rsplit('.', 1)[-1] if '.' in n else 'serialized' for n, d in inside if d != theirs[n]]
+    return 'identical' if not differ else 'differs: ' + ', '.join(differ)
+
+
+def copy_streaming_files(build):
+    """The project's StreamingAssets files (SaveIcon.png), which the build copies as they are."""
+    source = build.root / 'Assets' / 'StreamingAssets'
+    for path in sorted(source.rglob('*')):
+        if path.is_file() and path.suffix != '.meta':
+            build.write(f'StreamingAssets/{path.relative_to(source).as_posix()}', path.read_bytes())
 
 
 def main():

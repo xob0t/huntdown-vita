@@ -11,12 +11,14 @@ when anything here uses it, as Unity does). Types are listed in order of first u
 class and one per script for MonoBehaviours.
 """
 
+import struct
 from functools import cache
 
 import convert
 import typehash
 from container import External, HeaderInfo, ObjectEntry, ScriptType, TypeEntry, write_serialized
 from UnityPy.helpers.TypeTreeHelper import write_typetree
+from UnityPy.helpers.TypeTreeNode import get_common_strings
 from UnityPy.streams import EndianBinaryWriter
 
 BUILTIN_GUIDS = {
@@ -41,9 +43,36 @@ class TypeHashes:
         return typehash.builtin_hash(class_id, convert.VERSION)
 
 
+def tree_blob(node):
+    """A type tree as a serialized file (version 17) holds it: the node count, the string buffer's size,
+    the nodes (version, level, is-array, type and name as string offsets, byte size, index, meta flags)
+    and the buffer. Unity's common strings are offsets into its own table, with the top bit set."""
+    common = {s: offset for offset, s in get_common_strings().items()}
+    strings, offsets = bytearray(), {}
+
+    def offset(s):
+        if s in common:
+            return common[s] | 0x80000000
+        if s not in offsets:
+            offsets[s] = len(strings)
+            strings.extend(s.encode() + b'\0')
+        return offsets[s]
+
+    nodes = bytearray()
+    count = 0
+    for n in node.traverse():
+        is_array = 1 if n.m_Type == 'Array' else 0
+        type_at, name_at = offset(n.m_Type), offset(n.m_Name)
+        nodes += struct.pack(
+            '<hBBIIiii', n.m_Version, n.m_Level, is_array, type_at, name_at, n.m_ByteSize, count, n.m_MetaFlag
+        )
+        count += 1
+    return struct.pack('<ii', count, len(strings)) + bytes(nodes) + bytes(strings)
+
+
 class SerializedWriter:
-    def __init__(self, name, platform=30):
-        self.name, self.platform = name, platform
+    def __init__(self, name, platform=30, type_trees=False):
+        self.name, self.platform, self.type_trees = name, platform, type_trees
         self.objects = []  # (path_id, class_id, script, data, tree)
         self.externals = []
 
@@ -93,6 +122,8 @@ class SerializedWriter:
                 else:
                     types.append(TypeEntry(class_id, False, -1, None, hashes.builtin(class_id)))
             node = tree or convert.release_tree(class_id)
+            if self.type_trees and types[type_index[key]].tree is None:
+                types[type_index[key]].tree = tree_blob(node)
             w = EndianBinaryWriter(endian='<')
             write_typetree(data, node, w)
             entries.append(ObjectEntry(path_id, type_index[key], w.bytes))
@@ -102,5 +133,5 @@ class SerializedWriter:
             if isinstance(t.script_type_index, ScriptType):
                 t.script_type_index = script_types.index(t.script_type_index)
         externals = [External(path=f, guid=BUILTIN_GUIDS.get(f, b'\0' * 16)) for f in self.externals]
-        header = HeaderInfo(target_platform=self.platform)
+        header = HeaderInfo(target_platform=self.platform, enable_type_tree=self.type_trees)
         return write_serialized(header, types, entries, externals, script_types)

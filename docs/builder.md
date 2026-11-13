@@ -5,15 +5,17 @@
 ```
 uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --compare
 uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --only level0,resources.assets --compare
+uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --only StreamingAssets --compare   # the bundles
+uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --only levels/1-1 --compare        # one bundle
 ```
 
 `--compare` checks each file it writes, byte for byte, against the reference: a copy of the editor's build in `builds/hunt-2018.2.19f1-vita-unity` (copy `builds/hunt-2018.2.19f1-vita` there after an editor build). The builder still needs the editor's data folder for the PS Vita player, IL2CPP and the shader compiler, but not the editor itself.
 
-The `check_*.py` scripts compare one kind of object with the reference in detail (`check_managers.py`, `check_typehash.py`, `check_imported.py`, ...). For a file that differs, `artifacts/classdiff.py <file>` counts the differing objects by class and `artifacts/objone.py <file> <path ID>...` shows an object's fields side by side.
+The `check_*.py` scripts compare one kind of object with the reference in detail (`check_managers.py`, `check_typehash.py`, `check_imported.py`, ...). For a file that differs, `artifacts/classdiff.py <file>` counts the differing objects by class and `artifacts/objone.py <file> <path ID>...` shows an object's fields side by side; `artifacts/bundlediff.py <bundle> [path ID...]` does the same for a bundle's serialized file.
 
 ## Where it stands
 
-As of 2026-11-13, a full run takes about 3 minutes.
+As of 2026-11-13, a full run takes about 3 minutes, and the bundles about 12 more (most of it encoding 3,791 sounds).
 
 | File | Against Unity's |
 |---|---|
@@ -23,7 +25,7 @@ As of 2026-11-13, a full run takes about 3 minutes.
 | `globalgamemanagers.assets` | Only the Game MonoScript's `m_PropertiesHash` differs: the builder's field model of Game hashes differently, cause not found yet. Every other script matches. |
 | `globalgamemanagers` | Lacks 3 managers (classes 301, 303 and 310). ResourceManager and ScriptMapper follow resources.assets's differences. |
 | `Resources/unity_builtin_extra`, `resources.resource` | Not looked at yet. |
-| `StreamingAssets` (253 AssetBundles: the levels and the sounds) | Not written: the builder has no AssetBundle writer yet. |
+| `StreamingAssets` (252 AssetBundles: the levels and the sounds) | `tools/builder/bundles.py`. Every bundle's serialized file matches except its sprites (249, the vertex order below). The sound banks differ inside: HEVAG from the builder's encoder on another Vorbis decoder's samples, and FMOD's per-clip hash. area3/level1's DXT5 textures differ, as in resources.assets. `--compare` compares the files inside a bundle; Unity's LZ4 is older than the lz4 library's and compresses differently. |
 
 In `resources.assets`:
 

@@ -30,6 +30,7 @@ from paths import PROJECT, WORK
 from PIL import Image
 
 RGB24, RGBA32, DXT1, DXT5 = 3, 4, 10, 12
+CUBEMAP_FILE_ID = 8900000
 COMPRESSED = {DXT1: RGB24, DXT5: RGBA32}  # and what each falls back to when the PS Vita cannot use it
 BUILD_TARGET = 'PSP2'
 SPRITE = 8  # textureType
@@ -252,6 +253,80 @@ def texture(asset, file_name, stream, project=PROJECT):
         'm_ColorSpace': int(settings['mipmaps'].get('sRGBTexture', 1)),
         'image data': image,
         'm_StreamData': streamed,
+    }
+
+
+def srgb_to_linear(c):
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def linear_to_srgb(c):
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
+
+
+def mip_chain(image, srgb):
+    """An image (H x W x channels, uint8) and its mip levels down to 1x1: Unity's box filter (mipMapMode 0),
+    each level from the one before, averaged in linear light for an sRGB texture, rounded."""
+    levels = [image]
+    while max(levels[-1].shape[:2]) > 1:
+        a = levels[-1].astype(np.float64) / 255
+        if srgb:
+            a = srgb_to_linear(a)
+        if a.shape[0] > 1:
+            a = (a[0::2] + a[1::2]) / 2
+        if a.shape[1] > 1:
+            a = (a[:, 0::2] + a[:, 1::2]) / 2
+        if srgb:
+            a = linear_to_srgb(a)
+        levels.append(np.round(a * 255).astype(np.uint8))
+    return levels
+
+
+def cubemap(asset, file_name, stream, project=PROJECT):
+    """The Cubemap of an image imported with textureShape 2 (Huntdown's one: GroundLoop, a 64x384 strip of
+    six faces, RGB24 with mipmaps). Each face top row first, its mip levels after it, face after face."""
+    settings = importer(asset)
+    with Image.open(project / asset.path) as img:
+        rgba = np.asarray(img.convert('RGBA'))
+    height, width = rgba.shape[:2]
+    if height == 6 * width:
+        faces = [rgba[i * width : (i + 1) * width] for i in range(6)]
+    elif width == 6 * height:
+        faces = [rgba[:, i * height : (i + 1) * height] for i in range(6)]
+    else:
+        raise NotImplementedError(f'{asset.path}: a cubemap that is not a strip of six faces')
+    size = faces[0].shape[0]
+    fmt = texture_format(settings, size, size, has_alpha(rgba, settings))
+    channels = {RGB24: 3, RGBA32: 4}.get(fmt)
+    if channels is None:
+        raise NotImplementedError(f'{asset.path}: a compressed cubemap')
+    mipmaps = settings['mipmaps'].get('enableMipMap', '0') != '0'
+    srgb = settings['mipmaps'].get('sRGBTexture', '1') != '0'
+    face_data = []
+    for face in faces:
+        levels = mip_chain(np.ascontiguousarray(face[..., :channels]), srgb) if mipmaps else [face[..., :channels]]
+        face_data.append(b''.join(np.ascontiguousarray(level).tobytes() for level in levels))
+    data = b''.join(face_data)
+    return {
+        'm_Name': asset.name_of(CUBEMAP_FILE_ID),
+        'm_ForcedFallbackFormat': RGBA32,
+        'm_DownscaleFallback': False,
+        'm_Width': size,
+        'm_Height': size,
+        'm_CompleteImageSize': len(face_data[0]),
+        'm_TextureFormat': fmt,
+        'm_MipCount': len(mip_chain(faces[0][:, :, :1], False)) if mipmaps else 1,
+        'm_IsReadable': settings.get('isReadable') == '1',
+        'm_StreamingMipmaps': settings.get('streamingMipmaps', '0') == '1',
+        'm_StreamingMipmapsPriority': int(settings.get('streamingMipmapsPriority', 0)),
+        'm_ImageCount': 6,
+        'm_TextureDimension': 2,
+        'm_TextureSettings': texture_settings(settings),
+        'm_LightmapFormat': 0,
+        'm_ColorSpace': int(srgb),
+        'image data': b'',
+        'm_StreamData': stream.add(data),
+        'm_SourceTextures': [{'m_FileID': 0, 'm_PathID': 0}] * 6,
     }
 
 

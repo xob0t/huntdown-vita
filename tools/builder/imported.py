@@ -36,6 +36,10 @@ def texture2d(build, file_name, guid, file_id, asset):
     return textures.texture(asset, file_name, stream(build, file_name))
 
 
+def cubemap(build, file_name, guid, file_id, asset):
+    return textures.cubemap(asset, file_name, stream(build, file_name))
+
+
 def sprite(build, file_name, guid, file_id, asset):
     return textures.sprite(asset, build.placement, file_name, file_id)
 
@@ -54,7 +58,7 @@ def text(build, file_name, guid, file_id, asset):
     return text_asset(asset)
 
 
-BUILDERS = {28: texture2d, 213: sprite, 128: font, 21: font_material, 49: text}
+BUILDERS = {28: texture2d, 89: cubemap, 213: sprite, 128: font, 21: font_material, 49: text}
 
 
 def build_object(build, file_name, guid, file_id, asset):

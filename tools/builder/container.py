@@ -1,7 +1,7 @@
 """
 Standalone reader/writer for Unity SerializedFile containers (.assets / levelN /
-globalgamemanagers), for Unity 2018.2.19f1 (serialized version 17), PSP2 target,
-WITHOUT type trees. Pure Python 3, no UnityPy.
+globalgamemanagers), for Unity 2018.2.19f1 (serialized version 17), PSP2 target.
+The player's files have no type trees; AssetBundles' do (TypeEntry.tree, the writer only). Pure Python 3, no UnityPy.
 
     python container.py <file> [...]      # parse -> rebuild -> compare bytes
     from container import parse_serialized, write_serialized, HeaderInfo
@@ -25,7 +25,7 @@ builds/drifter-2018.2.19f1-vita/Media satisfy them, and the rebuild is byte-iden
 3. Metadata blob (starts at file offset 20, endian = header endian):
      unity version      C string, e.g. "2018.2.19f1\0"
      target platform    i32 (30 = PSP2)
-     enable_type_tree   u8 (0 in every file here; 1 would add a type-tree blob per type)
+     enable_type_tree   u8 (0 in the player's files; 1 in bundles: a type-tree blob after each type's hash)
      type count         i32, then per type:
         class_id i32, is_stripped u8, script_type_index i16 (-1 in all built-in types seen),
         script_id 16 bytes  ONLY if class_id == 114 (MonoBehaviour),
@@ -88,6 +88,7 @@ class TypeEntry:
     script_type_index: int = -1
     script_id: bytes | None = None  # 16 bytes, required when class_id == 114
     old_type_hash: bytes = b'\x00' * 16
+    tree: bytes | None = None  # the type tree blob, written when the header enables type trees (bundles)
 
 
 @dataclass
@@ -299,8 +300,6 @@ def write_serialized(
     h = header_info
     if h.version != SUPPORTED_VERSION:
         raise NotImplementedError('only serialized version 17 is supported')
-    if h.enable_type_tree:
-        raise NotImplementedError('type trees are not supported')
     script_types = script_types or []
     if len({o.path_id for o in objects}) != len(objects):
         raise ValueError('duplicate path_id')
@@ -329,6 +328,8 @@ def write_serialized(
             w.bytes_(t.script_id)
         assert len(t.old_type_hash) == 16
         w.bytes_(t.old_type_hash)
+        if h.enable_type_tree:
+            w.bytes_(t.tree)
 
     w.i32(len(objects))
     for o in sorted(objects, key=lambda o: o.path_id):

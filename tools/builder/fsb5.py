@@ -18,7 +18,7 @@ FMOD reads banks without checking the hash.
 import hashlib
 import struct
 
-CODEC_HEVAG = 9
+CODEC_PCM16, CODEC_HEVAG = 2, 9
 HEADER = 0x3C
 ALIGN = 32
 RATES = [0, 8000, 11000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 96000]
@@ -43,7 +43,8 @@ def bank(name, rate, channels, samples, data, codec=CODEC_HEVAG):
         more = i + 1 < len(chunks)
         sample += struct.pack('<I', more | len(body) << 1 | kind << 25) + body
     sample_headers = align(HEADER + len(sample)) - HEADER
-    data_size = align(len(data))
+    # PCM data takes 16 bytes more before the alignment (Unity's banks: every PCM clip of the reference)
+    data_size = align(len(data) + (16 if codec == CODEC_PCM16 else 0))
     head = struct.pack('<4s6I', b'FSB5', 1, 1, sample_headers, 0, data_size, codec)
     content = hashlib.md5(data).digest()
     head += bytes(8) + hashlib.md5(name.encode('utf-8')).digest()[:8] + content

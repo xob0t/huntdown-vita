@@ -31,6 +31,7 @@ IMPORTED = {
     '.txt': [(49, 4900000)], '.bytes': [(49, 4900000)], '.xml': [(49, 4900000)], '.json': [(49, 4900000)],
     '.csv': [(49, 4900000)], '.webm': [(329, 32900000)], '.mp4': [(329, 32900000)],
 }  # fmt: skip
+INDEX_VERSION = 2  # 2: cubemaps (textureShape 2) are class 89
 SKIP = {'.cs', '.dll', '.hlsl', '.cginc', '.unity', '.meta', '.md', '.so'}
 
 
@@ -79,7 +80,7 @@ class Asset:
 class AssetDB:
     def __init__(self, project=PROJECT):
         self.project = project
-        cache_file = WORK / 'assetdb.pickle'
+        cache_file = WORK / f'assetdb-{INDEX_VERSION}.pickle'  # a new version reindexes every asset
         cache = {}
         if cache_file.exists():
             with open(cache_file, 'rb') as f:
@@ -116,6 +117,8 @@ class AssetDB:
         else:
             a.classes = {fid: cid for cid, fid in IMPORTED[ext]}
             sprite = re.search(r'^  textureType: 8$', text, re.MULTILINE)
+            if a.classes.get(2800000) == 28 and re.search(r'^  textureShape: 2$', text, re.MULTILINE):
+                a.classes = {8900000: 89}  # a cubemap
             if a.classes.get(2800000) == 28 and sprite and re.search(r'^  spriteMode: 1$', text, re.MULTILINE):
                 a.classes[21300000] = 213  # a texture imported as one sprite
             elif a.classes.get(2800000) == 28 and sprite and re.search(r'^  spriteMode: 2$', text, re.MULTILINE):
