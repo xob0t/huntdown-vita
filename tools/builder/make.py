@@ -3,7 +3,9 @@
     uv run tools/builder/make.py [--out dir] [--vpk]
 
 Lays out the build folder (package.py), writes the serialized data and streams (build.py), builds
-the game code module (il2cpp.py), and with --vpk packages it like the pipeline's `package` stage.
+the game code module (il2cpp.py), adds what the pipeline adds to the editor's build (the native
+plugin HuntClock and boot.config's graphics jobs), and with --vpk packages it like the pipeline's
+`package` stage.
 """
 
 import argparse
@@ -30,12 +32,23 @@ def make(out):
         data.write_all(build)
         with progress.step('Code module'):
             times = il2cpp.build(out)
+        with progress.step('Native plugins and boot.config'):
+            pipeline = downgrade_pipeline()
+            pipeline.native_plugins(out)
+            pipeline.boot_config(out)
     if times['reused']:
         progress.console.print('Code module: reused, its inputs have not changed')
     else:
         steps = ', '.join(f'{k} {times[k]:.0f} s' for k in ('unitylinker', 'il2cpp'))
         progress.console.print(f'Code module: {steps}')
     progress.done(f'Built {out} in {time.time() - start:.0f} s')
+
+
+def downgrade_pipeline():
+    sys.path.insert(0, str(paths.ROOT / 'tools' / 'downgrade'))
+    import pipeline
+
+    return pipeline
 
 
 def main():
@@ -45,10 +58,7 @@ def main():
     args = parser.parse_args()
     make(args.out)
     if args.vpk:
-        sys.path.insert(0, str(paths.ROOT / 'tools' / 'downgrade'))
-        import pipeline
-
-        pipeline.package_vita(args.out)
+        downgrade_pipeline().package_vita(args.out)
     return 0
 
 
