@@ -349,6 +349,7 @@ COMPAT_SOURCES = [
             'Prof',
             'Debris',
             'Gc',
+            'TouchInput',
         )
     ),
 ]

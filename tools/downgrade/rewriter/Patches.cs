@@ -238,6 +238,31 @@ partial class DowngradeAssemblies
         return count;
     }
 
+    // The game's reads of Input.touchCount and Input.touchSupported go to HuntCompat TouchInput.Count and
+    // Supported: the PS Vita's touch screen doesn't switch the game to its phone controls (compat/TouchInput.cs).
+    static readonly Dictionary<string, string> TouchReads = new Dictionary<string, string>
+    {
+        { "get_touchCount", "Count" }, { "get_touchSupported", "Supported" },
+    };
+
+    static int RouteTouchInput(ModuleDefinition module)
+    {
+        int count = 0;
+        foreach (TypeDefinition type in AllTypes(module.Types))
+            foreach (MethodDefinition method in type.Methods.Where(m => m.HasBody))
+                foreach (Instruction call in method.Body.Instructions)
+                {
+                    var called = call.Operand as MethodReference;
+                    string replacement;
+                    if (call.OpCode != OpCodes.Call || called == null || called.DeclaringType.FullName != "UnityEngine.Input" ||
+                        !TouchReads.TryGetValue(called.Name, out replacement))
+                        continue;
+                    call.Operand = CompatMethod(module, "TouchInput", replacement);
+                    count++;
+                }
+        return count;
+    }
+
     // Every Dictionary<string, AudioClip> indexer read in the game's code (Snd.levelClips["..."]) goes to HuntCompat
     // Clips.Get(dictionary, name), which logs a missing name and throws the same (compat/Clips.cs). Same stack.
     static int RouteClipLookups(ModuleDefinition module)

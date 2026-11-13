@@ -37,7 +37,9 @@ namespace HuntCompat
             "-hunt-shots <s> <prefix> [after]  a screenshot every s seconds, <prefix>-<seconds>.png, from after seconds on (default 0),\n" +
             "                         for what a run shows over time (each takes ~0.6 s on the PS Vita)\n" +
             "-hunt-no-vsync           vSyncCount 0 and no frame cap, for unsynchronized frame times\n" +
-            "-hunt-visible-top        with -hunt-heartbeat, the visible renderers by name and sorting layer (HUNT_VISIBLE)\n" +
+            "-hunt-visible-top        with -hunt-heartbeat, the visible renderers by name and sorting layer (HUNT_VISIBLE), and\n" +
+            "                         the screen they cover by name, layer and shader (HUNT_COVER; cover= is the sum)\n" +
+            "-hunt-input-log          each joystick button Unity reports pressed or released (HUNT_INPUT)\n" +
             "-hunt-mute               no sound (AudioListener.volume 0, kept there), for test runs on a PC in use\n" +
             "-hunt-stall-dump <s>     crash the player when a frame has taken s seconds, for a core dump with the main thread's stack\n" +
             "-hunt-stall-after <t>    with -hunt-stall-dump, only frames that start t seconds or more after startup (skips earlier stalls)\n" +
@@ -52,7 +54,7 @@ namespace HuntCompat
         static float heartbeat, quitAfter = -1f, shotAfter = -1f;
         static string shotPath, shotsPrefix;
         static float shotsEvery = -1f, lastShots, shotsAfter;
-        static bool noVsync, mute, visibleTop;
+        static bool noVsync, mute, visibleTop, inputLog;
         static System.Text.RegularExpressions.Regex findPattern;
         static float findAfter = -1f;
         static float stallDump = -1f, stallAfter;
@@ -100,6 +102,7 @@ namespace HuntCompat
             shotsAfter = HuntFlags.NumberAt(args, "-hunt-shots", 3, 0f);
             noVsync = HuntFlags.Has(args, "-hunt-no-vsync");
             visibleTop = HuntFlags.Has(args, "-hunt-visible-top");
+            inputLog = HuntFlags.Has(args, "-hunt-input-log");
             mute = HuntFlags.Has(args, "-hunt-mute");
             if (mute) AudioListener.volume = 0f;
             string find = HuntFlags.Value(args, "-hunt-find");
@@ -223,6 +226,7 @@ namespace HuntCompat
                 Application.targetFrameRate = -1;
             }
             float now = Time.realtimeSinceStartup;
+            if (inputLog) LogInput();
             if (sceneToLoad != null && !sceneRequested && now - lastLoad >= 2f)
             {
                 sceneRequested = true;
@@ -300,6 +304,42 @@ namespace HuntCompat
             Debug.Log("HUNT_FIND " + count + " renderers match " + findPattern);
         }
 
+        // -hunt-input-log: each joystick button Unity reports pressed or released (KeyCode.JoystickButton0-19:
+        // Unity's own numbering), and each of the game's Rewired actions player 1 starts (Rewired_Core, read by
+        // reflection: HuntCompat doesn't reference it), as HUNT_INPUT lines.
+        static readonly string[] Actions = { "Jump", "Fire", "Fire2", "Action", "Back", "Start", "Dash", "B8", "B9", "B10" };
+        static MethodInfo rewiredButtonDown;
+        static object rewiredPlayer;
+
+        static void LogInput()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                var key = (KeyCode)((int)KeyCode.JoystickButton0 + i);
+                if (Input.GetKeyDown(key)) Debug.Log("HUNT_INPUT down " + key);
+                if (Input.GetKeyUp(key)) Debug.Log("HUNT_INPUT up " + key);
+            }
+            if (rewiredPlayer == null)
+            {
+                Type reInput = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Rewired.ReInput", false)).FirstOrDefault(t => t != null);
+                if (reInput == null || !(bool)reInput.GetProperty("isReady").GetValue(null, null)) return;
+                object players = reInput.GetProperty("players").GetValue(null, null);
+                rewiredPlayer = players.GetType().GetMethod("GetPlayer", new[] { typeof(int) }).Invoke(players, new object[] { 0 });
+                rewiredButtonDown = rewiredPlayer.GetType().GetMethod("GetButtonDown", new[] { typeof(string) });
+            }
+            foreach (string action in Actions)
+                if ((bool)rewiredButtonDown.Invoke(rewiredPlayer, new object[] { action })) Debug.Log("HUNT_INPUT action " + action);
+        }
+
+        // The share of the screen a world-space box covers, clipped to the screen (1: all of it).
+        static float ScreenShare(Camera view, Bounds bounds)
+        {
+            Vector3 a = view.WorldToScreenPoint(bounds.min), b = view.WorldToScreenPoint(bounds.max);
+            float width = Mathf.Min(Mathf.Max(a.x, b.x), Screen.width) - Mathf.Max(Mathf.Min(a.x, b.x), 0f);
+            float height = Mathf.Min(Mathf.Max(a.y, b.y), Screen.height) - Mathf.Max(Mathf.Min(a.y, b.y), 0f);
+            return width <= 0f || height <= 0f ? 0f : width * height / ((float)Screen.width * Screen.height);
+        }
+
         void Beat(float now)
         {
             int gc = GC.CollectionCount(0);
@@ -314,12 +354,28 @@ namespace HuntCompat
                 lights[light.type] = count + 1;
             }
             var visibleByName = visibleTop ? new Dictionary<string, int>() : null;
+            var coverByName = visibleTop ? new Dictionary<string, float>() : null;
+            // Screen coverage: the visible renderers' screen areas (their bounds, clipped to the screen) over
+            // the screen's, summed: how many times the GPU fills the screen with them, its fill-rate load.
+            Camera view = Camera.main ?? (Camera.allCamerasCount > 0 ? Camera.allCameras[0] : null);
+            float cover = 0f;
             foreach (Renderer renderer in FindObjectsOfType<Renderer>())
             {
                 if (!renderer.enabled) continue;
                 renderers++;
                 if (!renderer.isVisible) continue;
                 visible++;
+                float area = view == null ? 0f : ScreenShare(view, renderer.bounds);
+                cover += area;
+                if (coverByName != null && area > 0f)
+                {
+                    Material material = renderer.sharedMaterial;
+                    string coverKey = new string(renderer.name.Where(c => !char.IsDigit(c)).ToArray()).Replace(' ', '_') + "@" +
+                                      renderer.sortingLayerName + "/" + (material == null || material.shader == null ? "none" : material.shader.name.Replace(' ', '_'));
+                    float sum;
+                    coverByName.TryGetValue(coverKey, out sum);
+                    coverByName[coverKey] = sum + area;
+                }
                 if (visibleByName == null) continue;
                 // By name, digits dropped ("Enemy12" and "Enemy3" together), with the sorting layer.
                 string key = new string(renderer.name.Where(c => !char.IsDigit(c)).ToArray()).Replace(' ', '_') + "@" + renderer.sortingLayerName;
@@ -333,6 +389,7 @@ namespace HuntCompat
             line.Append(" fps=").Append((frames / (now - lastBeat)).ToString("F1", Inv));
             line.Append(" ms=").Append((frameSum / Math.Max(frames, 1)).ToString("F2", Inv));
             line.Append(" worst=").Append(worst.ToString("F1", Inv));
+            line.Append(" cover=").Append(cover.ToString("F2", Inv));
             line.Append(" gc=").Append(gc - collections);
             line.Append(" heapMB=").Append((GC.GetTotalMemory(false) / 1048576.0).ToString("F1", Inv));
             // Allocated per second, the heartbeat's own lines among it (some KB; on the PS Vita, Gc.Allocated).
@@ -358,6 +415,9 @@ namespace HuntCompat
             Debug.Log(line.ToString());
             if (visibleByName != null)
                 Debug.Log("HUNT_VISIBLE " + string.Join(" ", visibleByName.OrderByDescending(p => p.Value).Take(16).Select(p => p.Key + "=" + p.Value).ToArray()));
+            if (coverByName != null)
+                Debug.Log("HUNT_COVER " + string.Join(" ", coverByName.OrderByDescending(p => p.Value).Take(16)
+                    .Select(p => p.Key + "=" + p.Value.ToString("F2", Inv)).ToArray()));
             string profile = Prof.Report(frames);  // a HUNT_PROF=1 build's timings (compat/Prof.cs)
             if (profile != null) Debug.Log(profile);
             lastBeat = now;

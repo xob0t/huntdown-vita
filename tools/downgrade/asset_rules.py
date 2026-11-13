@@ -58,6 +58,9 @@ REWIRED_VITA_ELEMENTS = {
     15: 11,  # Center 2: Start
     **{i: i - 7 for i in range(19, 23)},  # the d-pad
 }
+# The template map has no Start or Back (the game's pause, GamePad: Back and Start both pause): on the PS
+# Vita they go on Start and Select, as on the other controllers' maps. Action ID -> the PS Vita's element.
+REWIRED_VITA_ADDED = {7: 11, 6: 10}  # Start: Start, Back: Select
 REWIRED_PLATFORMS = {'vita'}
 REWIRED_SECTION = re.compile(r'^    joystickMaps:\n(.*?)(?=^    keyboardMaps:)', re.MULTILINE | re.DOTALL)
 REWIRED_MAP = re.compile(r'^    - id: (\d+)\n.*?(?=^    - id: |\Z)', re.MULTILINE | re.DOTALL)
@@ -87,6 +90,12 @@ def rewired_vita_maps(text: str):
             kept.append(
                 re.sub(r'_elementIdentifierId: \d+', f'_elementIdentifierId: {REWIRED_VITA_ELEMENTS[element]}', entry)
             )
+        mapped = {int(re.search(r'_actionId: (-?\d+)', entry)[1]) for entry in kept}
+        button = next(e for e in kept if '_elementType: 1\n' in e)  # a button's entry, for the added ones
+        for action, element in REWIRED_VITA_ADDED.items():
+            if action not in mapped:
+                added_entry = re.sub(r'_actionId: -?\d+', f'_actionId: {action}', button)
+                kept.append(re.sub(r'_elementIdentifierId: \d+', f'_elementIdentifierId: {element}', added_entry))
         head = re.sub(r'^    - id: \d+', f'    - id: {next_id}', head, count=1)
         head = head.replace(f'hardwareGuidString: {REWIRED_TEMPLATE}', f'hardwareGuidString: {REWIRED_VITA}')
         added.append(head + '      actionElementMaps:\n' + ''.join(kept))

@@ -44,6 +44,9 @@ Frame rate:
 
 - The garbage collector no longer stops a level about once a minute (about 0.2 s each time: IL2CPP's collector goes through the whole 18-24 MB managed heap). On the PS Vita it is held and collects when a level starts or restarts from a checkpoint, behind the load or the fade, and when the pause menu opens with 4 MB or more of garbage (`compat/Gc.cs`). The game allocates only about 0.2 KB a frame in play, so the 24 MB that still collect anywhere take about half an hour of play without a death, a pause or a new level. Level 1-1 to Sweet Angel's arena: one collection, at the load (178 ms), and none in play, where the game's collector ran about every 60 s.
 
+- Start and Select pause the game. Rewired's PS Vita map comes from the game's Dual Analog Gamepad template map, which has no Start or Back; the PS Vita copy gets them on Start and Select (`asset_rules.py`, REWIRED_VITA_ADDED), as the game's maps for other pads have them.
+- The touch screen does nothing. The game has phone controls a touch would switch to (its on-screen stick and buttons, which followed the finger); on the PS Vita it sees no touch screen (`compat/TouchInput.cs`).
+
 - The game keeps 128 debris pieces on the PS Vita instead of 256 (`compat/Debris.cs`). Explosions and breaking glass throw as many as before; when the pool is full the game reuses the oldest piece, as it does at 256, so old shards on the ground go sooner. The engine spends about 50 us a frame on each visible sprite there: at Sweet Angel's arena in level 1-1, 240 pieces on screen took the frame rate down to 41-52 fps, with the game's own code at 3 ms of the frame. It now holds 60.
 
 - The game's view is the full 480x270 game pixels at 2 screen pixels each: the game's own scale, ceil(544 / 270), was 3 on the PS Vita, which showed 320x181 and looked zoomed in (`compat/View.cs`).
