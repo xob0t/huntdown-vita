@@ -8,8 +8,8 @@ using UnityEngine;
 // heap, 18-24 MB in a level, which takes the PS Vita 0.15-0.2 s. It runs after a MB or two of allocations, and
 // the game allocates about 0.2 KB a frame in play: a stop about once a minute. On the PS Vita it is held
 // (GC_disable) and collects only where a stop doesn't show: when a level starts or restarts from a checkpoint
-// (Game.InitLevel, behind the load or the fade; any garbage) and when the pause menu opens (Game.PauseGame, with
-// PauseMinMB or more). Play with no death, pause or new level collects where it is at CapMB, about half an hour
+// (Game.InitLevel, behind the load or the fade, with LevelMinMB or more: a level's load leaves 3-12 MB, a restart
+// after a death about 1) and when the pause menu opens (Game.PauseGame, with PauseMinMB or more). Play with no death, pause or new level collects where it is at CapMB, about half an hour
 // of it. The heap holds up to CapMB of garbage more, from the 160-190 MB of main memory free in a level. The
 // rewriter (rewriter/Patches.cs, PatchGcSafePoints) has those two methods call LevelStart and Paused first.
 //   -hunt-gc game|held   game: the collector's own timing (other players' default); held: the PS Vita's default
@@ -20,7 +20,7 @@ namespace HuntCompat
 {
     public static class Gc
     {
-        const float CapMB = 24f, PauseMinMB = 4f;
+        const float CapMB = 24f, LevelMinMB = 2f, PauseMinMB = 4f;
         const long MB = 1024 * 1024;
         static bool held;
         static long cap;
@@ -51,7 +51,7 @@ namespace HuntCompat
         // Game.InitLevel: a level's start, or its restart from a checkpoint.
         public static void LevelStart()
         {
-            if (held) Collect("level", 0);
+            if (held) Collect("level", (long)(LevelMinMB * MB));
         }
 
         // Game.PauseGame(bool): the player paused (or the menu opens on its own, the controller gone).

@@ -347,9 +347,10 @@ COMPAT_SOURCES = [
             'LevelJump',
             'Clips',
             'Prof',
-            'Debris',
+            'Pools',
             'Gc',
             'TouchInput',
+            'Fades',
         )
     ),
 ]

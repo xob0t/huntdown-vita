@@ -169,27 +169,44 @@ partial class DowngradeAssemblies
         return 1;
     }
 
-    // FlyingObjects' constructor sets its debris pool's size (debrisIdleLength = 256); the value goes through
-    // HuntCompat Debris.Pool first, which keeps fewer pieces on the PS Vita (compat/Debris.cs).
-    static int PatchDebrisPool(ModuleDefinition module)
+    // The game's effect pools: where each pool's size is set (a store of the field in the method), the value goes
+    // through HuntCompat Pools.Size(size, name) first, which keeps fewer sprites on the PS Vita (compat/Pools.cs).
+    // (type, method, field, the pool's name in Pools); each has exactly one such store.
+    static readonly string[][] PoolSizes =
     {
-        TypeDefinition flying = GameType(module, "FlyingObjects");
-        if (flying == null) return 0;
-        FieldDefinition length = flying.Fields.Single(f => f.Name == "debrisIdleLength");
-        MethodReference pool = CompatMethod(module, "Debris", "Pool");
-        int count = 0;
-        foreach (MethodDefinition constructor in flying.Methods.Where(m => m.IsConstructor && m.HasBody))
+        new[] { "FlyingObjects", ".ctor", "debrisIdleLength", "debris" },
+        new[] { "FlyingObjects", ".ctor", "bloodIdleLength", "blood" },
+        new[] { "FlyingObjects", "StartRain", "itemLength", "rain" },
+        new[] { "FlyingObjects", "StartSnow", "itemLength", "snow" },
+        new[] { "FlyingObjects", "StartAsh", "itemLength", "ash" },
+        new[] { "Background2_2", null, "dustLength", "dust" },  // in whichever method sets it
+    };
+
+    static int PatchPoolSizes(ModuleDefinition module)
+    {
+        MethodReference size = CompatMethod(module, "Pools", "Size");
+        int total = 0;
+        foreach (string[] pool in PoolSizes)
         {
-            ILProcessor il = constructor.Body.GetILProcessor();
-            foreach (Instruction store in constructor.Body.Instructions
-                         .Where(i => i.OpCode == OpCodes.Stfld && i.Operand is FieldReference && ((FieldReference)i.Operand).Resolve() == length).ToList())
+            TypeDefinition type = GameType(module, pool[0]);
+            if (type == null) return 0;
+            FieldDefinition field = type.Fields.Single(f => f.Name == pool[2]);
+            int count = 0;
+            foreach (MethodDefinition method in type.Methods.Where(m => m.HasBody && (pool[1] == null || m.Name == pool[1])))
             {
-                il.InsertBefore(store, Instruction.Create(OpCodes.Call, pool));
-                count++;
+                ILProcessor il = method.Body.GetILProcessor();
+                foreach (Instruction store in method.Body.Instructions
+                             .Where(i => i.OpCode == OpCodes.Stfld && i.Operand is FieldReference && ((FieldReference)i.Operand).Resolve() == field).ToList())
+                {
+                    il.InsertBefore(store, Instruction.Create(OpCodes.Ldstr, pool[3]));
+                    il.InsertBefore(store, Instruction.Create(OpCodes.Call, size));
+                    count++;
+                }
             }
+            if (count != 1) throw new InvalidOperationException(pool[0] + "." + (pool[1] ?? "*") + ": " + count + " stores of " + pool[2] + ", not 1");
+            total += count;
         }
-        if (count != 1) throw new InvalidOperationException("FlyingObjects: " + count + " stores of debrisIdleLength in its constructor, not 1");
-        return count;
+        return total;
     }
 
     // Game.InitLevel (a level's start or restart from a checkpoint) and Game.PauseGame(bool) (the pause menu) call
@@ -235,6 +252,24 @@ partial class DowngradeAssemblies
                 Prepend(method, Instruction.Create(OpCodes.Call, enter), Instruction.Create(OpCodes.Stloc, start));
                 count++;
             }
+        return count;
+    }
+
+    // SpriteObject.SetAlpha and SetFade start with HuntCompat Fades.Watch(renderer): a sprite the game fades isn't
+    // drawn while its alpha is 0 (compat/Fades.cs).
+    static int PatchSpriteFades(ModuleDefinition module)
+    {
+        TypeDefinition sprite = GameType(module, "SpriteObject");
+        if (sprite == null) return 0;
+        FieldDefinition renderer = sprite.Fields.Single(f => f.Name == "renderer");
+        MethodReference watch = CompatMethod(module, "Fades", "Watch");
+        int count = 0;
+        foreach (MethodDefinition method in sprite.Methods.Where(m => (m.Name == "SetAlpha" || m.Name == "SetFade") && m.Parameters.Count == 1))
+        {
+            Prepend(method, Instruction.Create(OpCodes.Ldarg_0), Instruction.Create(OpCodes.Ldfld, renderer), Instruction.Create(OpCodes.Call, watch));
+            count++;
+        }
+        if (count != 2) throw new InvalidOperationException("SpriteObject: " + count + " of SetAlpha and SetFade, not 2");
         return count;
     }
 
