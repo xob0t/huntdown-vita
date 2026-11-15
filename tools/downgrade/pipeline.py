@@ -341,6 +341,7 @@ COMPAT_SOURCES = [
             'Settings',
             'Offline',
             'FrameRate',
+            'Menus',
             'View',
             'Preload',
             'LoadTimer',

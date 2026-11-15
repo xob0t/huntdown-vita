@@ -4,7 +4,7 @@ using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-// Single game methods that call HuntCompat rules: Rewired's platform, the analytics' login, the frame rate, the view size, Resources loads timed.
+// Single game methods that call HuntCompat rules: Rewired's platform, the analytics' login, the frame rate, the view size, the menus, Resources loads timed.
 // Part of the assembly rewriter; see DowngradeAssemblies.cs.
 partial class DowngradeAssemblies
 {
@@ -300,6 +300,107 @@ partial class DowngradeAssemblies
         }
         if (count != 2) throw new InvalidOperationException("SpriteObject: " + count + " of SetAlpha and SetFade, not 2");
         return count;
+    }
+
+    // The game's menus without player two and the resolution menu, where HuntCompat Menus says so (the PS Vita;
+    // compat/Menus.cs):
+    // - GamePad.GetPlayerHasController(player) and SearchForPlayerController(player, steal) start with
+    //   if (!Menus.PlayerTwo(player)) return false;
+    // - MainMenu.PromptPlayerTwo(showRemove) starts with if (!Menus.PromptPlayerTwo()) return;
+    // - The main menu's StartMenu.Init and the pause menus' PauseMenu.Init and MapPauseMenu.Init number their entries
+    //   with num++; 2 PLAYERS' (p2 = num++) and JOIN PLAYER 2's (changePlayer = num++) become
+    //   <field> = Menus.TwoPlayerEntry(num), num += Menus.TwoPlayerEntries(). Without p2 the main menu's first entry
+    //   is the game's START GAME instead of 1 PLAYER (StartMenu.GetStartGameText).
+    // - VideoMenu: Init's entries go through Menus.VideoChoices before the store to menuChoices, each read of
+    //   selectedNr through Menus.VideoIndex, and each constant index of menuChoices[...] and UpdateSelection(...)
+    //   through Menus.VideoShown.
+    static int PatchMenus(ModuleDefinition module)
+    {
+        TypeDefinition gamepad = GameType(module, "GamePad");
+        TypeDefinition mainMenu = GameType(module, "MainMenu");
+        TypeDefinition video = GameType(module, "VideoMenu");
+        if (gamepad == null || mainMenu == null || video == null) return 0;
+        int count = 0;
+
+        MethodReference playerTwo = CompatMethod(module, "Menus", "PlayerTwo");
+        foreach (MethodDefinition method in gamepad.Methods.Where(m =>
+                     (m.Name == "GetPlayerHasController" || m.Name == "SearchForPlayerController") && m.Parameters.Count >= 1 &&
+                     m.Parameters[0].ParameterType.FullName == "System.Int32" && m.ReturnType.FullName == "System.Boolean"))
+        {
+            Instruction first = method.Body.Instructions[0];
+            Prepend(method, Instruction.Create(OpCodes.Ldarg_1), Instruction.Create(OpCodes.Call, playerTwo), Instruction.Create(OpCodes.Brtrue, first),
+                    Instruction.Create(OpCodes.Ldc_I4_0), Instruction.Create(OpCodes.Ret));
+            count++;
+        }
+        if (count != 2) throw new InvalidOperationException("GamePad: " + count + " of GetPlayerHasController and SearchForPlayerController, not 2");
+
+        MethodDefinition prompt = mainMenu.Methods.Single(m => m.Name == "PromptPlayerTwo" && m.Parameters.Count == 1);
+        ReturnAtStartIf(prompt, OpCodes.Brfalse, Instruction.Create(OpCodes.Call, CompatMethod(module, "Menus", "PromptPlayerTwo")));
+        count++;
+
+        foreach (string[] entry in new[] { new[] { "StartMenu", "p2" }, new[] { "PauseMenu", "changePlayer" }, new[] { "MapPauseMenu", "changePlayer" } })
+        {
+            string name = entry[0];
+            TypeDefinition menu = GameType(module, name);
+            if (menu == null) return 0;
+            MethodDefinition init = menu.Methods.Single(m => m.Name == "Init" && m.Parameters.Count == 1);
+            FieldDefinition twoPlayers = menu.Fields.Single(f => f.Name == entry[1]);
+            Instruction[] sets = init.Body.Instructions
+                .Where(i => i.OpCode == OpCodes.Stfld && ((FieldReference)i.Operand).Resolve() == twoPlayers).ToArray();
+            // ldarg.0; ldloc num; dup; ldc.i4.1; add; stloc num; stfld <field>
+            Instruction step = sets.Length == 1 ? sets[0].Previous.Previous.Previous : null;
+            if (step == null || step.OpCode != OpCodes.Ldc_I4_1 || step.Next.OpCode != OpCodes.Add || !step.Next.Next.OpCode.Name.StartsWith("stloc"))
+                throw new InvalidOperationException(name + ".Init: " + entry[1] + " isn't set once by " + entry[1] + " = num++");
+            step.OpCode = OpCodes.Call;
+            step.Operand = CompatMethod(module, "Menus", "TwoPlayerEntries");
+            init.Body.GetILProcessor().InsertBefore(sets[0], Instruction.Create(OpCodes.Call, CompatMethod(module, "Menus", "TwoPlayerEntry")));
+            count++;
+        }
+
+        MethodReference choices = CompatMethod(module, "Menus", "VideoChoices");
+        MethodReference index = CompatMethod(module, "Menus", "VideoIndex");
+        MethodReference shown = CompatMethod(module, "Menus", "VideoShown");
+        int stores = 0, reads = 0, constants = 0;
+        foreach (MethodDefinition method in video.Methods.Where(m => m.HasBody))
+        {
+            ILProcessor il = method.Body.GetILProcessor();
+            foreach (Instruction instruction in method.Body.Instructions.ToArray())
+            {
+                var field = instruction.Operand as FieldReference;
+                if (field != null && field.Name == "menuChoices" && instruction.OpCode == OpCodes.Stfld && method.Name == "Init")
+                {
+                    il.InsertBefore(instruction, Instruction.Create(OpCodes.Call, choices));
+                    stores++;
+                }
+                else if (field != null && field.Name == "selectedNr" && instruction.OpCode == OpCodes.Ldfld)
+                {
+                    InsertAfter(il, instruction, Instruction.Create(OpCodes.Call, index));
+                    reads++;
+                }
+                else if (field != null && field.Name == "menuChoices" && instruction.OpCode == OpCodes.Ldfld && IntConstant(instruction.Next))
+                {
+                    InsertAfter(il, instruction.Next, Instruction.Create(OpCodes.Call, shown));
+                    constants++;
+                }
+                else if (CalledName(instruction) == "UpdateSelection" && IntConstant(instruction.Previous))
+                {
+                    il.InsertBefore(instruction, Instruction.Create(OpCodes.Call, shown));
+                    constants++;
+                }
+            }
+        }
+        // Init's one store; the switches of ClickStart, ClickLeft and ClickRight; the entries SetCRT, ToggleVsync and
+        // ToggleFrameRate write and update, and SetToDefault's two.
+        if (stores != 1 || reads != 3 || constants != 10)
+            throw new InvalidOperationException("VideoMenu: " + stores + " stores of its entries (not 1), " + reads + " reads of selectedNr (not 3), " +
+                                                constants + " constant indexes (not 10)");
+        return count + stores + reads + constants;
+    }
+
+    static bool IntConstant(Instruction instruction)
+    {
+        return instruction != null && (instruction.OpCode == OpCodes.Ldc_I4 || instruction.OpCode == OpCodes.Ldc_I4_S ||
+                                       (instruction.OpCode.Code >= Code.Ldc_I4_M1 && instruction.OpCode.Code <= Code.Ldc_I4_8));
     }
 
     // The game's reads of Input.touchCount and Input.touchSupported go to HuntCompat TouchInput.Count and
