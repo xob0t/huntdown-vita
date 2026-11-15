@@ -115,6 +115,7 @@ partial class DowngradeAssemblies
         new Pass("patches", Scope.Game, RouteTouchInput),
         new Pass("patches", Scope.Game, PatchSpriteFades),
         new Pass("patches", Scope.Game, PatchMenus),
+        new Pass("patches", Scope.Game, BatchEffects),
         new Pass("patches", Scope.Game, PatchPoolSizes),
         new Pass("patches", Scope.Game, PatchGcSafePoints),
         new Pass("patches", Scope.All, SkipEmptyJoystickAxes),
