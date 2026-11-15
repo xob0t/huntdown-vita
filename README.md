@@ -6,7 +6,7 @@ There are no game files in this repository. You bring your own copy, and the pip
 
 ## Where it stands
 
-Work in progress. The VPK builds, and on the console the game runs from its opening cutscene through the menus into the levels at 60 fps; the levels tried load in about 15 s and draw as on PC, but none has been played to its end yet. [docs/status.md](docs/status.md) has the details and the open issues.
+Work in progress, but playable. The VPK builds, and on the console the game runs from its opening cutscene through the menus into the levels, which draw as on PC and play with the pad; Start and Select pause. A level takes about 15 s to load. The first area has been played through on the console: it runs at 60 fps, and drops frames only now and then, when a lot is happening on screen. Debris, blood and weather use smaller pools than on PC to keep it there. In a test run through every level the game holds 60 fps outside loads and restarts after a death, though that run doesn't reach the busiest parts of the harder levels. [docs/status.md](docs/status.md) has the details and the open issues.
 
 ## How it differs from the PC release
 
