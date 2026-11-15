@@ -428,6 +428,8 @@ partial class DowngradeAssemblies
     //   FlyingObject's constructor ends with EffectBatch.RegisterSprite(obj, objRenderer), SpriteObject.SpriteObjectStart
     //   with EffectBatch.SpriteMade(sprite, renderer), and each new SpriteObject(...) in FlyingObjects is between
     //   EffectBatch.PoolBegin() and PoolEnd().
+    // - Every other type of the game: its Renderer.sortingOrder and sortingLayerName writes go to EffectBatch too, which
+    //   records the orders other renderers use; Game.InitLevel starts with EffectBatch.LevelStart().
     static readonly Dictionary<string, string> BatchedWrites = new Dictionary<string, string>
     {
         { "UnityEngine.SpriteRenderer::set_sprite", "SetSprite" }, { "UnityEngine.SpriteRenderer::set_color", "SetColor" },
@@ -497,6 +499,24 @@ partial class DowngradeAssemblies
             count += routed.Values.Sum();
         }
 
+        var batched = new HashSet<TypeDefinition> { effect, spriteObject, flyingObject, flyingObjects };
+        int others = 0;
+        foreach (TypeDefinition type in AllTypes(module.Types).Where(t => !batched.Contains(t)))
+            foreach (MethodDefinition method in type.Methods.Where(m => m.HasBody))
+                foreach (Instruction call in method.Body.Instructions)
+                {
+                    var called = call.Operand as MethodReference;
+                    if ((call.OpCode != OpCodes.Call && call.OpCode != OpCodes.Callvirt) || called == null ||
+                        called.DeclaringType.FullName != "UnityEngine.Renderer" || (called.Name != "set_sortingOrder" && called.Name != "set_sortingLayerName"))
+                        continue;
+                    call.OpCode = OpCodes.Call;
+                    call.Operand = CompatMethod(module, "EffectBatch", called.Name == "set_sortingOrder" ? "SetSortingOrder" : "SetSortingLayerName");
+                    others++;
+                }
+        if (others < 20) throw new InvalidOperationException("the game's other sorting writes: " + others + ", fewer than 20");
+        MethodDefinition initLevel = GameType(module, "Game").Methods.Single(m => m.Name == "InitLevel" && m.Parameters.Count == 0);
+        Prepend(initLevel, Instruction.Create(OpCodes.Call, CompatMethod(module, "EffectBatch", "LevelStart")));
+
         int pools = 0;
         foreach (MethodDefinition method in flyingObjects.Methods.Where(m => m.HasBody))
         {
@@ -511,7 +531,7 @@ partial class DowngradeAssemblies
             }
         }
         if (pools < 8) throw new InvalidOperationException("FlyingObjects: " + pools + " new SpriteObject(...), not 8 or more");
-        return count + pools;
+        return count + others + 1 + pools;
     }
 
     // The game's reads of Input.touchCount and Input.touchSupported go to HuntCompat TouchInput.Count and

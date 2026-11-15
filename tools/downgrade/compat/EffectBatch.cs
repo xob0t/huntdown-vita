@@ -9,11 +9,15 @@ using UnityEngine;
 // a few explosions on screen they took the frame past 16.7 ms.
 // Their renderers are off, and Build, just before the engine renders (Application.onBeforeRender), writes their
 // sprites, each as the engine would draw it (the sprite's own mesh through its transform), into one mesh per sorting
-// layer, band of sorting orders and texture, drawn by a MeshRenderer at that layer and the lowest order in the band,
-// with the sprites' material. Within a mesh the sprites go in order of their sorting order, then of when they were
-// shown (the engine's own order for equal ones is its own). A band is a thousand orders (0-999, 1000-1999, -1000 to
-// -1, ...): the game's orders for these are a few (0, 2, 600, 9900, -600, -999) or count up from 1000 (blood, bullet
-// holes), and nothing else of its sorts between them in the same layer.
+// layer, segment of sorting orders and texture, drawn by a MeshRenderer at that layer and the lowest order in it, with
+// the sprites' material. Within a mesh the sprites go in order of their sorting order, then of when they were shown
+// (the engine's own order for equal ones is its own). A segment is the orders between two that another renderer of
+// the layer uses (an order such a renderer uses is a segment of its own), so no other renderer draws between the
+// sprites of one mesh: the orders other renderers use are recorded as the game sets them (the rewriter routes every
+// Renderer.sortingOrder and sortingLayerName write of the game's to SetSortingOrder and SetSortingLayerName) and from
+// a scan of every renderer shortly after each level starts (LevelStart, from Game.InitLevel), for the ones their
+// prefabs set. The game's orders for these sprites are a few (0, 2, 100, 600, 9900, -999), 550-650 at random (large
+// debris) or count up from 1000 (blood, bullet holes).
 // The rewriter (rewriter/Patches.cs, BatchEffects) has:
 // - Effect's writes (SpriteRenderer.sprite and color, the color's read, Renderer.sortingLayerName and sortingOrder,
 //   Transform.localPosition, localScale and localEulerAngles, GameObject.SetActive) go to the methods below, which
@@ -46,7 +50,8 @@ namespace HuntCompat
             public Transform parent;
             public Material material;
             public Shape shape;  // the sprite's, null for none
-            public Bucket bucket;  // for the layer, band, texture and material; null when one of them changed
+            public Bucket bucket;  // for the layer, segment, texture and material; null when one of them changed
+            public int segments;  // the value of EffectBatch.segments the bucket was found with
             public Color32 color = new Color32(255, 255, 255, 255);
             public int layer, order;
             public Vector3 position, scale = Vector3.one, euler;
@@ -83,6 +88,7 @@ namespace HuntCompat
             public int[] triangleArray;
             public int vertexCount, indexCount;
             public int order = int.MinValue;
+            public int textureKey;
             public bool drawn, mixed;
         }
 
@@ -99,7 +105,15 @@ namespace HuntCompat
             public int GetHashCode(Object o) { return o.GetHashCode(); }
         }
 
-        const int Band = 1000;
+        // A bucket's key: its sprites' layer, segment, texture and material.
+        struct Key : System.IEquatable<Key>
+        {
+            public int layer, segment, texture, material;
+
+            public bool Equals(Key o) { return layer == o.layer && segment == o.segment && texture == o.texture && material == o.material; }
+            public override int GetHashCode() { return ((layer * 31 + segment) * 31 + texture) * 31 + material; }
+        }
+
         static bool? on;
         static bool check;
         static int pooling;
@@ -109,7 +123,12 @@ namespace HuntCompat
         static readonly List<Item> active = new List<Item>();
         static readonly Dictionary<Object, Shape> shapes = new Dictionary<Object, Shape>(Reference);
         static readonly Dictionary<string, int> layers = new Dictionary<string, int>();
-        static readonly Dictionary<long, Bucket> buckets = new Dictionary<long, Bucket>();
+        static readonly Dictionary<Key, Bucket> buckets = new Dictionary<Key, Bucket>();
+        // The orders the layer's other renderers use (sorted), by layer id, and whether one is listed.
+        static readonly Dictionary<int, List<int>> taken = new Dictionary<int, List<int>>();
+        static readonly HashSet<long> takenSet = new HashSet<long>();
+        static int segments = 1;  // bumped when an order is taken: each item's segment is worked out again
+        static int scanAt = -1, scanAgainAt = -1;
         static readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
         static readonly List<Bucket> bucketList = new List<Bucket>();
         static readonly Bounds Everywhere = new Bounds(Vector3.zero, new Vector3(1e6f, 1e6f, 1e6f));
@@ -215,9 +234,7 @@ namespace HuntCompat
             Item item = Find(renderer);
             if (Native(item)) renderer.sprite = sprite;
             if (item == null) return;
-            Shape shape = ReferenceEquals(sprite, null) ? null : ShapeOf(sprite);
-            if (item.shape != null && shape != null && item.shape.texture != shape.texture) item.bucket = null;
-            item.shape = shape;
+            item.shape = ReferenceEquals(sprite, null) ? null : ShapeOf(sprite);
         }
 
         public static Color GetColor(SpriteRenderer renderer)
@@ -237,9 +254,14 @@ namespace HuntCompat
         {
             Item item = Find(renderer);
             if (Native(item)) renderer.sortingLayerName = name;
-            if (item == null) return;
+            if (on != true) return;
             int id;
             if (!layers.TryGetValue(name ?? "", out id)) layers[name ?? ""] = id = SortingLayer.NameToID(name);
+            if (item == null)
+            {
+                Take(id, renderer.sortingOrder);
+                return;
+            }
             if (id != item.layer) item.bucket = null;
             item.layer = id;
         }
@@ -248,8 +270,13 @@ namespace HuntCompat
         {
             Item item = Find(renderer);
             if (Native(item)) renderer.sortingOrder = order;
-            if (item == null) return;
-            if (BandOf(order) != BandOf(item.order)) item.bucket = null;
+            if (on != true) return;
+            if (item == null)
+            {
+                Take(renderer.sortingLayerID, order);
+                return;
+            }
+            if (order != item.order) item.bucket = null;
             item.order = order;
         }
 
@@ -301,14 +328,53 @@ namespace HuntCompat
             }
         }
 
-        static int BandOf(int order)
+        // An order another renderer of the layer uses.
+        static void Take(int layer, int order)
         {
-            return order >= 0 ? order / Band : -1 - (-1 - order) / Band;
+            if (!takenSet.Add(((long)layer << 32) | (uint)order)) return;
+            List<int> orders;
+            if (!taken.TryGetValue(layer, out orders)) taken[layer] = orders = new List<int>();
+            int at = orders.BinarySearch(order);
+            orders.Insert(at < 0 ? ~at : at, order);
+            segments++;
+        }
+
+        // The segment of an order in a layer: 2i for the orders between the (i-1)th and the ith taken one, 2i+1 for the
+        // ith taken one itself.
+        static int SegmentOf(int layer, int order)
+        {
+            List<int> orders;
+            if (!taken.TryGetValue(layer, out orders)) return 0;
+            int at = orders.BinarySearch(order);
+            return at >= 0 ? 2 * at + 1 : 2 * ~at;
+        }
+
+        // The start of a level or a restart from a checkpoint (Game.InitLevel): its renderers are scanned a few frames
+        // later and again a couple of seconds later, once its objects are made (some come from a coroutine).
+        public static void LevelStart()
+        {
+            if (on != true) return;
+            scanAt = Time.frameCount + 10;
+            scanAgainAt = Time.frameCount + 120;
+        }
+
+        static void Scan()
+        {
+            foreach (Renderer renderer in Object.FindObjectsOfType<Renderer>())
+                if (!items.ContainsKey(renderer) && !(renderer is MeshRenderer && renderer.name == "HuntEffectBatch"))
+                    Take(renderer.sortingLayerID, renderer.sortingOrder);
+            // The destroyed ones' entries (a level's weather is made again for the next).
+            var gone = new List<Object>();
+            foreach (KeyValuePair<Object, Item> entry in items)
+                if (entry.Value.go == null) gone.Add(entry.Key);
+            foreach (Object key in gone) items.Remove(key);
         }
 
         // Before the engine renders: the active sprites in view into the buckets' meshes.
         static void Build()
         {
+            int frame = Time.frameCount;
+            if (frame == scanAt || frame == scanAgainAt) Scan();
             int kept = 0;
             for (int i = 0; i < active.Count; i++)
             {
@@ -372,7 +438,12 @@ namespace HuntCompat
                 }
                 float reach = shape.radius * Mathf.Max(Mathf.Abs(m.m00) + Mathf.Abs(m.m01), Mathf.Abs(m.m10) + Mathf.Abs(m.m11));
                 if (m.m03 + reach < left || m.m03 - reach > right || m.m13 + reach < bottom || m.m13 - reach > top) continue;
-                Bucket bucket = item.bucket ?? (item.bucket = BucketOf(item, shape));
+                Bucket bucket = item.bucket;
+                if (bucket == null || item.segments != segments || bucket.textureKey != shape.textureKey)
+                {
+                    item.bucket = bucket = BucketOf(item, shape);
+                    item.segments = segments;
+                }
                 if (bucket.items.Count > 0 && bucket.items[bucket.items.Count - 1].order != item.order) bucket.mixed = true;
                 item.sortKey = ((long)item.order << 32) | (uint)bucket.items.Count;
                 bucket.items.Add(item);
@@ -525,8 +596,7 @@ namespace HuntCompat
         static Bucket BucketOf(Item item, Shape shape)
         {
             int materialKey = item.material != null ? item.material.GetInstanceID() : 0;
-            long key = ((long)(item.layer & 0xFFFFF) << 40) ^ ((long)(BandOf(item.order) & 0xFFFFF) << 20) ^ (long)(shape.textureKey & 0xFFFFF) ^
-                       ((long)(materialKey & 0xFFF) << 60);
+            var key = new Key { layer = item.layer, segment = SegmentOf(item.layer, item.order), texture = shape.textureKey, material = materialKey };
             Bucket bucket;
             if (buckets.TryGetValue(key, out bucket)) return bucket;
             var go = new GameObject("HuntEffectBatch");
@@ -548,7 +618,7 @@ namespace HuntCompat
             block.SetVector("_Flip", Vector4.one);
             renderer.SetPropertyBlock(block);
             renderer.enabled = false;
-            bucket = new Bucket { renderer = renderer, mesh = mesh, order = item.order };
+            bucket = new Bucket { renderer = renderer, mesh = mesh, order = item.order, textureKey = shape.textureKey };
             buckets[key] = bucket;
             bucketList.Add(bucket);
             return bucket;
