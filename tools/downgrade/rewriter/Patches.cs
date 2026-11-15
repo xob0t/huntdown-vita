@@ -39,7 +39,10 @@ partial class DowngradeAssemblies
     // return 0 at once for a Unity joystick slot with no pad in it, or an axis the PS Vita's pad doesn't have (HuntCompat
     // RewiredInput.Polled; compat/RewiredInput.cs):
     // each read is an Input.GetAxis by name ("Joy3Axis17"), which Unity looks up among the game's 552 axes, and Rewired
-    // reads every axis of all four slots the PS Vita reports each frame.
+    // reads every axis of all four slots the PS Vita reports each frame. GetJoystickButtonValueByJoystickId(joystick,
+    // button) returns false at once for such a slot (Polled with axis 0). Besides, where RewiredInput.Trimmed says so,
+    // ThreadSafeUnityInput.Mouse.Update (Unity's mouse, read for Rewired's mouse) and InputManager_Base.FixedUpdate
+    // (an input update the game's configuration doesn't ask for: its updateLoop is Update only) return at once.
     static int SkipEmptyJoystickAxes(ModuleDefinition module)
     {
         TypeDefinition helper = module.GetType("Rewired.UnityInputHelper");
@@ -55,7 +58,17 @@ partial class DowngradeAssemblies
             count++;
         }
         if (count != 2) throw new InvalidOperationException("Rewired.UnityInputHelper: " + count + " joystick axis readers, not 2");
-        return count;
+        MethodDefinition button = helper.Methods.Single(m => m.Name == "GetJoystickButtonValueByJoystickId" && m.Parameters.Count == 2);
+        Instruction buttonFirst = button.Body.Instructions[0];
+        Prepend(button, Instruction.Create(OpCodes.Ldarg_0), Instruction.Create(OpCodes.Ldc_I4_0), Instruction.Create(OpCodes.Call, polled),
+                Instruction.Create(OpCodes.Brtrue, buttonFirst), Instruction.Create(OpCodes.Ldc_I4_0), Instruction.Create(OpCodes.Ret));
+        count++;
+        MethodReference trimmed = CompatMethod(module, "RewiredInput", "Trimmed");
+        TypeDefinition mouse = module.GetType("Rewired.ThreadSafeUnityInput").NestedTypes.Single(t => t.Name == "Mouse");
+        ReturnAtStartIf(mouse.Methods.Single(m => m.Name == "Update" && m.Parameters.Count == 0), OpCodes.Brtrue, Instruction.Create(OpCodes.Call, trimmed));
+        ReturnAtStartIf(module.GetType("Rewired.InputManager_Base").Methods.Single(m => m.Name == "FixedUpdate" && m.Parameters.Count == 0),
+                        OpCodes.Brtrue, Instruction.Create(OpCodes.Call, trimmed));
+        return count + 2;
     }
 
     // Analytics.LoginWith and LoginWithXbox (coroutines the game starts at launch) return HuntCompat
@@ -401,6 +414,104 @@ partial class DowngradeAssemblies
     {
         return instruction != null && (instruction.OpCode == OpCodes.Ldc_I4 || instruction.OpCode == OpCodes.Ldc_I4_S ||
                                        (instruction.OpCode.Code >= Code.Ldc_I4_M1 && instruction.OpCode.Code <= Code.Ldc_I4_8));
+    }
+
+    // The game's effects, debris and weather drawn batched (compat/EffectBatch.cs):
+    // - Effect: its constructor ends with EffectBatch.Register(effect, renderer), and in its other methods each write to
+    //   the effect's renderer, transform and GameObject goes to EffectBatch's method of the same name, with the same
+    //   stack: SpriteRenderer.sprite and color (the color's read too), Renderer.sortingLayerName, sortingOrder and
+    //   enabled, Transform.localPosition, localScale and localEulerAngles, GameObject.SetActive. Reads of another object
+    //   (the followed one's transform) stay the engine's.
+    // - SpriteObject, FlyingObject and FlyingObjects: their writes of SpriteRenderer.sprite and color,
+    //   Renderer.sortingLayerName, sortingOrder and enabled, and GameObject.SetActive go to EffectBatch the same way, and
+    //   SpriteObject's and FlyingObject's of Transform.localPosition, localScale, localEulerAngles and parent;
+    //   FlyingObject's constructor ends with EffectBatch.RegisterSprite(obj, objRenderer), SpriteObject.SpriteObjectStart
+    //   with EffectBatch.SpriteMade(sprite, renderer), and each new SpriteObject(...) in FlyingObjects is between
+    //   EffectBatch.PoolBegin() and PoolEnd().
+    static readonly Dictionary<string, string> BatchedWrites = new Dictionary<string, string>
+    {
+        { "UnityEngine.SpriteRenderer::set_sprite", "SetSprite" }, { "UnityEngine.SpriteRenderer::set_color", "SetColor" },
+        { "UnityEngine.Renderer::set_sortingLayerName", "SetSortingLayerName" }, { "UnityEngine.Renderer::set_sortingOrder", "SetSortingOrder" },
+        { "UnityEngine.Renderer::set_enabled", "SetEnabled" }, { "UnityEngine.GameObject::SetActive", "SetActive" },
+    };
+
+    static readonly Dictionary<string, string> TransformWrites = new Dictionary<string, string>
+    {
+        { "UnityEngine.Transform::set_localPosition", "SetLocalPosition" }, { "UnityEngine.Transform::set_localScale", "SetLocalScale" },
+        { "UnityEngine.Transform::set_localEulerAngles", "SetLocalEulerAngles" }, { "UnityEngine.Transform::set_parent", "SetParent" },
+    };
+
+    static int BatchEffects(ModuleDefinition module)
+    {
+        TypeDefinition effect = GameType(module, "Effect");
+        TypeDefinition spriteObject = GameType(module, "SpriteObject");
+        TypeDefinition flyingObject = GameType(module, "FlyingObject");
+        TypeDefinition flyingObjects = GameType(module, "FlyingObjects");
+        if (effect == null || spriteObject == null || flyingObject == null || flyingObjects == null) return 0;
+        int count = 0;
+        Func<TypeDefinition, string, string, string, int> registerAtEnd = (type, method, goField, rendererField) =>
+        {
+            FieldDefinition go = type.Fields.Single(f => f.Name == goField);
+            FieldDefinition renderer = type.Fields.Single(f => f.Name == rendererField);
+            MethodDefinition target = method == ".ctor" ? type.Methods.Single(m => m.IsConstructor && !m.IsStatic)
+                                                        : type.Methods.Single(m => m.Name == method);
+            string register = type == effect ? "Register" : type == flyingObject ? "RegisterSprite" : "SpriteMade";
+            return BeforeRets(target, () => new[]
+            {
+                Instruction.Create(OpCodes.Ldarg_0), Instruction.Create(OpCodes.Ldfld, go),
+                Instruction.Create(OpCodes.Ldarg_0), Instruction.Create(OpCodes.Ldfld, renderer),
+                Instruction.Create(OpCodes.Call, CompatMethod(module, "EffectBatch", register)),
+            });
+        };
+        count += registerAtEnd(effect, ".ctor", "effect", "renderer");
+        count += registerAtEnd(flyingObject, ".ctor", "obj", "objRenderer");
+        count += registerAtEnd(spriteObject, "SpriteObjectStart", "sprite", "renderer");
+
+        foreach (TypeDefinition type in new[] { effect, spriteObject, flyingObject, flyingObjects })
+        {
+            var routed = new Dictionary<string, int>();
+            foreach (MethodDefinition method in type.Methods.Where(m => m.HasBody && !(type == effect && m.IsConstructor)))
+                foreach (Instruction call in method.Body.Instructions)
+                {
+                    var called = call.Operand as MethodReference;
+                    string target;
+                    if ((call.OpCode != OpCodes.Call && call.OpCode != OpCodes.Callvirt) || called == null) continue;
+                    string name = called.DeclaringType.FullName + "::" + called.Name;
+                    if (!BatchedWrites.TryGetValue(name, out target) && !(type != flyingObjects && TransformWrites.TryGetValue(name, out target)) &&
+                        !(type == effect && name == "UnityEngine.SpriteRenderer::get_color" && (target = "GetColor") != null))
+                        continue;
+                    call.OpCode = OpCodes.Call;
+                    call.Operand = CompatMethod(module, "EffectBatch", target);
+                    int n;
+                    routed.TryGetValue(target, out n);
+                    routed[target] = n + 1;
+                }
+            string[] expected = type == effect ? new[] { "SetSprite", "SetColor", "GetColor", "SetSortingLayerName", "SetSortingOrder", "SetActive",
+                                                         "SetLocalPosition", "SetLocalScale", "SetLocalEulerAngles" }
+                              : type == flyingObjects ? new[] { "SetSortingLayerName" }
+                              : type == spriteObject ? new[] { "SetSprite", "SetColor", "SetSortingLayerName", "SetActive", "SetLocalPosition", "SetLocalScale",
+                                                               "SetLocalEulerAngles", "SetParent" }
+                              : new[] { "SetSprite", "SetColor", "SetSortingLayerName", "SetActive", "SetLocalPosition", "SetLocalScale" };
+            foreach (string target in expected)
+                if (!routed.ContainsKey(target)) throw new InvalidOperationException(type.Name + ": no " + target + " to route to EffectBatch");
+            count += routed.Values.Sum();
+        }
+
+        int pools = 0;
+        foreach (MethodDefinition method in flyingObjects.Methods.Where(m => m.HasBody))
+        {
+            ILProcessor il = method.Body.GetILProcessor();
+            foreach (Instruction made in method.Body.Instructions.ToArray())
+            {
+                var ctor = made.Operand as MethodReference;
+                if (made.OpCode != OpCodes.Newobj || ctor == null || ctor.DeclaringType.FullName != "SpriteObject") continue;
+                il.InsertBefore(made, Instruction.Create(OpCodes.Call, CompatMethod(module, "EffectBatch", "PoolBegin")));
+                InsertAfter(il, made, Instruction.Create(OpCodes.Call, CompatMethod(module, "EffectBatch", "PoolEnd")));
+                pools++;
+            }
+        }
+        if (pools < 8) throw new InvalidOperationException("FlyingObjects: " + pools + " new SpriteObject(...), not 8 or more");
+        return count + pools;
     }
 
     // The game's reads of Input.touchCount and Input.touchSupported go to HuntCompat TouchInput.Count and

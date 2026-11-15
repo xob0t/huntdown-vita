@@ -12,6 +12,9 @@ using UnityEngine;
 // Rewired reads all 29 of a pad to see whether any moves. The names are read again every 120 frames, so a pad that
 // comes or goes (a PS TV's) is picked up as Rewired itself picks it up. Measured in level 2-4, Rewired went from
 // 3.3 ms of each frame to 1.5 with this and its keyboard and mouse off (compat/RewiredTrim.cs).
+// Trimmed (the same flag) has Rewired skip Unity's mouse (ThreadSafeUnityInput.Mouse.Update, 0.28 ms of each frame,
+// for a mouse RewiredTrim.cs disables) and its FixedUpdate (0.2 ms a fixed step, twice a frame at 60 fps: an update
+// the game's configuration doesn't ask for, its updateLoop being Update only), and its button reads of empty slots.
 //   -hunt-rewired-axes all   read every slot, as the game does (the default off the PS Vita)
 // Part of HuntCompat; see Compat2018.cs.
 namespace HuntCompat
@@ -24,10 +27,15 @@ namespace HuntCompat
 
         const int VitaAxes = 8;
 
-        public static bool Polled(int joystick, int axis)
+        public static bool Trimmed()
         {
             if (everySlot == null) everySlot = !HuntFlags.Vita || HuntFlags.Value(ProbeFiles.Args, "-hunt-rewired-axes") == "all";
-            if (everySlot.Value) return true;
+            return !everySlot.Value;
+        }
+
+        public static bool Polled(int joystick, int axis)
+        {
+            if (!Trimmed()) return true;
             if (names == null || Time.frameCount - namesFrame >= 120)
             {
                 string[] now = Input.GetJoystickNames();

@@ -342,6 +342,8 @@ COMPAT_SOURCES = [
             'Offline',
             'FrameRate',
             'Menus',
+            'SpriteBench',
+            'EffectBatch',
             'View',
             'Preload',
             'LoadTimer',
