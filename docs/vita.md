@@ -131,6 +131,7 @@ uv run tools/downgrade/vita.py args --
 | `-hunt-level <a>-<l>[a\|b]` | Load this level instead of the first one picked, as in the bundles' names: `1-1` to `4-5`, `1-5a`, `2-5a`, `3-5a`, `4-5a`, `4-5b`. Dying, checkpoints and the next level go on as the game has them. HUNT_LEVEL in the log. `compat/LevelJump.cs`. |
 | `-hunt-fps 60\|30\|game` | The fixed frame rate. The PS Vita's default is 60, other players' `game`, the game's own automatic mode. `compat/FrameRate.cs`. |
 | `-hunt-view full\|game` | `full` shows all 480x270 game pixels, 2 screen pixels each, the PS Vita's default. `game` is the game's own scale, 3 on the PS Vita. `compat/View.cs`. |
+| `-hunt-menus vita\|game` | `vita` leaves out what a PS Vita doesn't have: 2 PLAYERS in the main menu (its first entry then reads START GAME), JOIN PLAYER 2 in the pause menus, the prompt for a second pad to join, and RESOLUTION in Options > Video. The PS Vita's default; `game` keeps the game's menus. `compat/Menus.cs`. |
 | `-hunt-preload on\|off` | Read the opening cutscene's and the menus' sprite sheets while the screen is still black at startup. On by default on the PS Vita only. `compat/Preload.cs`. |
 | `-hunt-load-ms <ms>` | Log every Resources load of ms or more (HUNT_LOADTIME). Default 30; 0 logs none. `compat/LoadTimer.cs`. |
 | `-hunt-load-priority low\|belownormal\|normal\|high` | `Application.backgroundLoadingPriority`, for experiments. The game's own unless given. |
