@@ -7,7 +7,8 @@ work/livearea/store/ and read from there afterwards. Writes to work/livearea/:
 
   icon0.png     128x128   bubble: the middle hunter's face (vertical key art)
   bg0.png       840x500   LiveArea background: the library hero art
-  gate.png      280x158   LiveArea start gate: the wide key art with its logo
+  gate.png      280x158   LiveArea start gate: the library hero art with the game's logo (logo_2x.png, which
+                          has a transparent background) across its bottom
   pic0.png      960x544   shown while the app starts: the wide key art with its logo
 
 The LiveArea images and pic0 are 8-bit indexed: the installer rejects a truecolor pic0 (promote
@@ -39,8 +40,12 @@ SOURCES = {
     'library.jpg': (CDN + 'library_600x900_2x.jpg', '4dcba96a234acec3307cbff5eb76f0cd26beb5b114da05b54fe7e39b7edd3ad0'),
     # Library hero art, 1920x620, without the logo.
     'hero.jpg': (CDN + 'library_hero.jpg', '87a0609d669fd8ea470d0e601e7d9292d7f6afdc3eab7df77c5f9af1fda98bde'),
+    # The library logo, 1280x720 with a transparent background.
+    'logo_2x.png': (CDN + 'logo_2x.png', 'ff64e22787882e5a7c64f5386e1bcaa8811ef3bbfd28a6442c9d32f88e280ce4'),
 }
 ICON_CROP = (225, 240, 355, 370)  # the middle hunter's face in library.jpg
+GATE_LOGO_WIDTH = 0.8  # of the gate's width
+GATE_LOGO_MARGIN = 6  # pixels between the logo and the gate's bottom edge
 
 
 def fetch():
@@ -78,6 +83,16 @@ def cover(image: Image.Image, size, box=None):
     return scaled.crop((left, top, left + width, top + height))
 
 
+def with_logo(image: Image.Image, logo: Image.Image):
+    """image with the logo (cut to what isn't transparent) centred across its bottom."""
+    logo = logo.crop(logo.getbbox())
+    width = round(image.width * GATE_LOGO_WIDTH)
+    logo = logo.resize((width, round(logo.height * width / logo.width)), Image.LANCZOS)
+    out = image.convert('RGBA')
+    out.alpha_composite(logo, ((image.width - width) // 2, image.height - logo.height - GATE_LOGO_MARGIN))
+    return out.convert('RGB')
+
+
 def indexed(image: Image.Image):
     return image.convert('RGB').quantize(PALETTE_COLORS, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
 
@@ -86,10 +101,11 @@ def compose(sources):
     capsule = Image.open(sources['capsule.jpg']).convert('RGB')
     library = Image.open(sources['library.jpg']).convert('RGB')
     hero = Image.open(sources['hero.jpg']).convert('RGB')
+    logo = Image.open(sources['logo_2x.png']).convert('RGBA')
     return {
         'icon0.png': indexed(cover(library, (128, 128), ICON_CROP)),
         'bg0.png': indexed(cover(hero, (840, 500))),
-        'gate.png': indexed(cover(capsule, (280, 158))),
+        'gate.png': indexed(with_logo(cover(hero, (280, 158)), logo)),
         'pic0.png': indexed(cover(capsule, (960, 544))),
     }
 
