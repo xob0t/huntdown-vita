@@ -7,8 +7,8 @@ work/livearea/store/ and read from there afterwards. Writes to work/livearea/:
 
   icon0.png     128x128   bubble: the middle hunter's face (vertical key art)
   bg0.png       840x500   LiveArea background: the library hero art
-  gate.png      280x158   LiveArea start gate: the library hero art with the game's logo (logo_2x.png, which
-                          has a transparent background) across its bottom
+  gate.png      280x158   LiveArea start gate: the game's logo alone (logo_2x.png), on transparency, so the
+                          LiveArea background shows around it
   pic0.png      960x544   shown while the app starts: the wide key art with its logo
 
 The LiveArea images and pic0 are 8-bit indexed: the installer rejects a truecolor pic0 (promote
@@ -44,8 +44,7 @@ SOURCES = {
     'logo_2x.png': (CDN + 'logo_2x.png', 'ff64e22787882e5a7c64f5386e1bcaa8811ef3bbfd28a6442c9d32f88e280ce4'),
 }
 ICON_CROP = (225, 240, 355, 370)  # the middle hunter's face in library.jpg
-GATE_LOGO_WIDTH = 0.8  # of the gate's width
-GATE_LOGO_MARGIN = 6  # pixels between the logo and the gate's bottom edge
+GATE_LOGO_WIDTH = 0.92  # of the gate's width
 
 
 def fetch():
@@ -83,14 +82,25 @@ def cover(image: Image.Image, size, box=None):
     return scaled.crop((left, top, left + width, top + height))
 
 
-def with_logo(image: Image.Image, logo: Image.Image):
-    """image with the logo (cut to what isn't transparent) centred across its bottom."""
+def logo_gate(logo: Image.Image, size):
+    """The logo (cut to what isn't transparent) centred on a transparent image of size, 8-bit indexed with its
+    transparent pixels one palette entry (tRNS)."""
     logo = logo.crop(logo.getbbox())
-    width = round(image.width * GATE_LOGO_WIDTH)
+    width = round(size[0] * GATE_LOGO_WIDTH)
     logo = logo.resize((width, round(logo.height * width / logo.width)), Image.LANCZOS)
-    out = image.convert('RGBA')
-    out.alpha_composite(logo, ((image.width - width) // 2, image.height - logo.height - GATE_LOGO_MARGIN))
-    return out.convert('RGB')
+    out = Image.new('RGBA', size, (0, 0, 0, 0))
+    out.alpha_composite(logo, ((size[0] - logo.width) // 2, (size[1] - logo.height) // 2))
+    # Edges blended against black, then cut at half coverage: an indexed image has one transparent entry.
+    rgb = Image.new('RGB', size, (0, 0, 0))
+    rgb.paste(out, mask=out.getchannel('A'))
+    image = rgb.quantize(PALETTE_COLORS - 1, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+    clear = PALETTE_COLORS - 1
+    palette = image.getpalette()[:3 * clear] + [0, 0, 0]
+    alpha = out.getchannel('A').point(lambda a: 255 if a >= 128 else 0)
+    image.paste(clear, mask=alpha.point(lambda a: 255 - a))
+    image.putpalette(palette)
+    image.info['transparency'] = clear
+    return image
 
 
 def indexed(image: Image.Image):
@@ -105,7 +115,7 @@ def compose(sources):
     return {
         'icon0.png': indexed(cover(library, (128, 128), ICON_CROP)),
         'bg0.png': indexed(cover(hero, (840, 500))),
-        'gate.png': indexed(with_logo(cover(hero, (280, 158)), logo)),
+        'gate.png': logo_gate(logo, (280, 158)),
         'pic0.png': indexed(cover(capsule, (960, 544))),
     }
 
