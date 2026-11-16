@@ -64,11 +64,16 @@ BUILD_LOCKS = ('vita-build', 'pc-build')
 NOT_TAKEN = 75  # exit code of take, run and wait when the lock stayed held (EX_TEMPFAIL)
 INTERRUPTED = 130  # exit code of `run` after Ctrl+C
 POLL_SECONDS = 5
+# The console is one for every port on this machine: its lock is shared (the other ports' lock.py use the same
+# file), so one project's vita.py sees another's run. Builds stay per project.
+SHARED_DEVICE_LOCK = Path(os.environ.get('VITA_DEVICE_LOCK') or Path.home() / '.t3' / 'vita-device.lock')
 
 
 def path(name):
     if name not in LOCKS:
         sys.exit(f'unknown lock {name!r}; one of {", ".join(LOCKS)}')
+    if name == 'vita-device':
+        return SHARED_DEVICE_LOCK
     return WORK / f'{name}.lock'
 
 

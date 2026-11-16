@@ -75,7 +75,7 @@ The flags can follow `args` directly or after `--`; both write the same line.
 
 ### Locks
 
-When several jobs share the console, take the `vita-device` lock first with `tools/downgrade/lock.py`.
+When several jobs share the console, take the `vita-device` lock first with `tools/downgrade/lock.py`. That lock is one file for every port on this machine, `%USERPROFILE%\.t3\vita-device.lock` (`VITA_DEVICE_LOCK` overrides it), so another port's run holds the console for this one too; start the holder text with the project's name (`huntdown: perf run of 3-3`). The `vita-build` and `pc-build` locks stay in this project's `work/`.
 A person at the console holds it as `user: <purpose>`.
 These commands refuse while someone else holds it: `sync`, `install`, `launch`, `quit`, `run`, `do`, `reboot` and `args`.
 Run them inside `lock.py run vita-device ...`, or set `HUNT_HOLDER=<your holder name>` after `lock.py take`.
@@ -171,7 +171,7 @@ IL2CPP's stack trace stops at `Dictionary.get_Item`, so that line is what names 
 
 ### Where a frame's time goes
 
-A build made with the build switch `HUNT_PROF=1` (`build.py`, or `pipeline.py code` then `quickcode`, with it set) times the frame methods of the game's and Rewired's assemblies: every FrameEvent, Update, LateUpdate and FixedUpdate, and each step of a coroutine (as `Type.Name()`) of its classes.
+A build made with the build switch `HUNT_PROF=1` (`build.py`, or `pipeline.py code` then `quickcode`, with it set) times the frame methods of the game's and Rewired's assemblies: every FrameEvent, Update, LateUpdate and FixedUpdate, the enemies' and objects' DoFrameEvent, the steps of `Game.UpdateGame` (`GoObjects`, `GoBullets`, `GoCam`, `GoPlayer`, ...), and each step of a coroutine (as `Type.Name()`) of its classes.
 Each heartbeat then also logs a HUNT_PROF line: the methods that took the most, in ms per frame, with their calls per frame (`compat/Prof.cs`).
 Times include the calls inside, so `Game.Update` is the game's whole frame; what the heartbeat's `ms=` has beyond it is the engine's (rendering, the sprites' transforms, sound) and the wait for vsync.
 To see what the engine spends that time on, a stall dump some milliseconds into the rendering samples it: `-hunt-stall-dump 0.008 -hunt-stall-from render`.

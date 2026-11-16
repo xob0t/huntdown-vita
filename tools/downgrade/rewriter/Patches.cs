@@ -259,11 +259,17 @@ partial class DowngradeAssemblies
         return 2;
     }
 
-    // Under the build switch HUNT_PROF=1 (common.BUILD_SWITCHES, a code switch), every void FrameEvent, Update,
+    // Under the build switch HUNT_PROF=1 (common.BUILD_SWITCHES, a code switch), every FrameEvent (the game's play
+    // objects' return a bool, which stays on the stack under Exit's call) and every void Update,
     // LateUpdate and FixedUpdate of the game's classes runs between HuntCompat Prof.Enter and Prof.Exit (its
     // "Class.Method" name, the start): the start goes in a new local, and the Exit call goes before each ret,
     // where branches to the ret now land (BeforeRets; compat/Prof.cs). Off, nothing changes.
-    static readonly HashSet<string> ProfiledMethods = new HashSet<string> { "FrameEvent", "Update", "LateUpdate", "FixedUpdate" };
+    static readonly HashSet<string> ProfiledMethods = new HashSet<string>
+    {
+        "FrameEvent", "Update", "LateUpdate", "FixedUpdate",
+        // Game.UpdateGame's steps, and the enemies' and the player's per-frame methods
+        "DoFrameEvent", "GoBullets", "GoObjects", "GoCam", "GoHandleInput", "GoKeys", "GoPlayer", "GetInput", "GoGameControls",
+    };
 
     static int ProfileFrameMethods(ModuleDefinition module)
     {
@@ -278,8 +284,8 @@ partial class DowngradeAssemblies
                 // compat/Phases.cs) spends its time on. The value MoveNext returns stays on the stack under Exit's call.
                 bool coroutine = method.Name == "MoveNext" && type.IsNested && type.Name.StartsWith("<") &&
                                  type.Interfaces.Any(i => i.InterfaceType.FullName == "System.Collections.IEnumerator");
-                if (!method.HasBody || method.IsStatic || method.Parameters.Count != 0 ||
-                    !(coroutine || ProfiledMethods.Contains(method.Name) && method.ReturnType.FullName == "System.Void"))
+                if (!method.HasBody || method.IsStatic || (method.Parameters.Count != 0 && !ProfiledMethods.Contains(method.Name)) ||
+                    !(coroutine || ProfiledMethods.Contains(method.Name) && (method.ReturnType.FullName == "System.Void" || method.Name == "FrameEvent")))
                     continue;
                 var start = new VariableDefinition(module.TypeSystem.Int64);
                 method.Body.Variables.Add(start);

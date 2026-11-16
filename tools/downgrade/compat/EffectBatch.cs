@@ -57,6 +57,7 @@ namespace HuntCompat
             public Vector3 position, scale = Vector3.one, euler;
             public bool active, visible = true, listed;
             public long sortKey;
+            public int id;
         }
 
         class Shape
@@ -66,6 +67,7 @@ namespace HuntCompat
             public Texture2D texture;
             public int textureKey;
             public float radius;  // of the vertices around the pivot, for the view test
+            public int id;
         }
 
         class Bucket
@@ -89,6 +91,9 @@ namespace HuntCompat
             public int vertexCount, indexCount;
             public int order = int.MinValue;
             public int textureKey;
+            // What the mesh was made from: its sprites, each one's matrix, shape, colour and order, hashed in the
+            // order they came; the same next frame (resting blood, bullet holes) and the mesh is kept as it is.
+            public int signature, lastSignature, lastCount;
             public bool drawn, mixed;
         }
 
@@ -137,7 +142,7 @@ namespace HuntCompat
         static int built, registered;
         static bool logged;  // with -hunt-heartbeat: what Build drew and took, every 600 frames (HUNT_EFFECT_BATCH)
         static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
-        static long gatherTicks, emitTicks, uploadTicks, drawnSprites, drawnVertices;
+        static long gatherTicks, emitTicks, uploadTicks, drawnSprites, drawnVertices, unchanged;
 
         public static bool On
         {
@@ -197,6 +202,7 @@ namespace HuntCompat
         static void Add(GameObject go, SpriteRenderer renderer, Item item, Transform transform)
         {
             item.go = go;
+            item.id = registered;
             item.material = renderer.sharedMaterial;
             item.layer = renderer.sortingLayerID;
             item.order = renderer.sortingOrder;
@@ -446,6 +452,18 @@ namespace HuntCompat
                 }
                 if (bucket.items.Count > 0 && bucket.items[bucket.items.Count - 1].order != item.order) bucket.mixed = true;
                 item.sortKey = ((long)item.order << 32) | (uint)bucket.items.Count;
+                int h = bucket.signature;
+                h = h * 31 + item.id;
+                h = h * 31 + shape.id;
+                h = h * 31 + m.m03.GetHashCode();
+                h = h * 31 + m.m13.GetHashCode();
+                h = h * 31 + m.m00.GetHashCode();
+                h = h * 31 + m.m01.GetHashCode();
+                h = h * 31 + m.m10.GetHashCode();
+                h = h * 31 + m.m11.GetHashCode();
+                h = h * 31 + m.m23.GetHashCode();
+                h = h * 31 + (item.color.r | item.color.g << 8 | item.color.b << 16 | item.color.a << 24);
+                bucket.signature = h * 31 + item.order;
                 bucket.items.Add(item);
                 bucket.matrices.Add(m);
             }
@@ -457,6 +475,19 @@ namespace HuntCompat
                 Bucket bucket = bucketList[i];
                 int count = bucket.items.Count;
                 drawnSprites += count;
+                if (count > 0 && bucket.drawn && count == bucket.lastCount && bucket.signature == bucket.lastSignature)
+                {
+                    // Nothing changed: the mesh stays.
+                    unchanged++;
+                    bucket.items.Clear();
+                    bucket.matrices.Clear();
+                    bucket.mixed = false;
+                    bucket.signature = 0;
+                    continue;
+                }
+                bucket.lastCount = count;
+                bucket.lastSignature = bucket.signature;
+                bucket.signature = 0;
                 if (count > 0)
                 {
                     if (bucket.mixed)
@@ -539,8 +570,9 @@ namespace HuntCompat
                 double ms = 1000.0 / System.Diagnostics.Stopwatch.Frequency / 600;
                 Debug.Log("HUNT_EFFECT_BATCH " + registered + " registered, " + active.Count + " active, " + bucketList.Count + " meshes; per frame: " +
                           (drawnSprites / 600) + " sprites, " + (drawnVertices / 600) + " vertices, gather " + (gatherTicks * ms).ToString("F2") +
-                          " ms, emit " + (emitTicks * ms).ToString("F2") + " ms, upload " + (uploadTicks * ms).ToString("F2") + " ms");
-                gatherTicks = emitTicks = uploadTicks = drawnSprites = drawnVertices = 0;
+                          " ms, emit " + (emitTicks * ms).ToString("F2") + " ms, upload " + (uploadTicks * ms).ToString("F2") + " ms, " +
+                          (unchanged / 600) + " meshes kept as they were");
+                gatherTicks = emitTicks = uploadTicks = drawnSprites = drawnVertices = unchanged = 0;
             }
         }
 
@@ -589,6 +621,7 @@ namespace HuntCompat
             {
                 vertices = vertices, uv = sprite.uv, triangles = sprite.triangles, texture = texture, radius = radius,
                 textureKey = texture != null ? texture.GetInstanceID() : 0,
+                id = shapes.Count,
             };
             return shape;
         }
