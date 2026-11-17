@@ -396,9 +396,10 @@ def sync_files(build: Path):
             sys.exit(
                 f'{APP} does not exist: install the VPK once (vita.py install, or pipeline.py package and VitaShell)'
             )
-        changed, total, known = 0, 0, set()
+        changed, total, known, names = 0, 0, set(), set()
         for name, data, digest in digests(build):
             total += 1
+            names.add(name)
             if synced.get(name) == digest:
                 continue
             # Out of the record until it is sent whole: a sync stopped while sending it sends it again
@@ -426,9 +427,17 @@ def sync_files(build: Path):
             MANIFEST.write_text(json.dumps(synced, indent=0))  # progress survives an interrupted sync
             if name == MODULE:
                 keep_symbols(build)
+        # The files an earlier build had and this one doesn't (a plugin or bundle since dropped): only the
+        # ones the record lists, which a sync or install put there, never anything else in the app's folder.
+        gone = sorted(set(synced) - names)
+        for name in gone:
+            with contextlib.suppress(ftplib.error_perm):  # already gone
+                connection.delete(f'{APP}/{name}')
+            del synced[name]
+            MANIFEST.write_text(json.dumps(synced, indent=0))
     finally:
         connection.close()
-    log(f'Synced {changed} of {total} files to {APP}')
+    log(f'Synced {changed} of {total} files to {APP}' + (f', removed {len(gone)} no longer in the build' if gone else ''))
 
 
 # Copies of the IL2CPP module's symbols, one per build sent to the console, named by the module's

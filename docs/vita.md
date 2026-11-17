@@ -57,7 +57,7 @@ The flags can follow `args` directly or after `--`; both write the same line.
 
 | Command | Effect |
 | --- | --- |
-| `sync [--build dir]` | Upload the files that changed since the last sync into `ux0:app/HUNT00001`. It quits a running game first, since replacing files under it crashes it. |
+| `sync [--build dir]` | Upload the files that changed since the last sync into `ux0:app/HUNT00001`, and delete the ones an earlier sync or install put there that the build no longer has. It quits a running game first, since replacing files under it crashes it. |
 | `seed [--build dir]` | Record a build as installed, from its VPK say, without uploading. The next sync then sends only the differences. |
 | `install [--build dir]` | Package the build as a VPK and stream it to vitacompanion's installer. This also applies `param.sfo` changes. |
 | `launch`, `quit`, `run` | Start the game, quit all apps, or quit, sync and launch. |
@@ -153,7 +153,7 @@ uv run tools/downgrade/vita.py args --
 | `-hunt-prof alloc` | In a `HUNT_PROF=1` build, the HUNT_PROF lines count KB allocated per frame instead of ms. See [Where a frame's time goes](#where-a-frames-time-goes). |
 | `-hunt-phases` | With `-hunt-heartbeat`, a HUNT_PHASES line: the steps of Unity's player loop that took the most, in ms per frame (`Update.ScriptRunBehaviourUpdate`, the scripts' Updates; `Update.ScriptRunDelayedDynamicFrameRate`, coroutines; `PostLateUpdate.FinishFrameRendering`, rendering and, at 60 fps, the wait for vsync). `compat/Phases.cs`. |
 | `-hunt-sprite-bench <after s>` | From `after` seconds on, add test sprites (0, 600 and 1200) set up in different ways and log the frame time of each (HUNT_BENCH): what a sprite costs the engine. `compat/SpriteBench.cs` lists the modes. |
-| `-hunt-effect-batch on\|off\|check` | The game's effects, debris, blood, shells, bullet holes and weather drawn as a few batched meshes instead of a sprite each: `on`, the PS Vita's default; `off`, the game's renderers; `check`, both, the batched ones tinted magenta and half transparent over the game's. With `-hunt-heartbeat`, a HUNT_EFFECT_BATCH line every 600 frames. `compat/EffectBatch.cs`. |
+| `-hunt-effect-batch on\|off\|check` | The game's effects, debris, blood, shells, bullet holes and weather drawn as a few batched meshes instead of a sprite each: `on`, the PS Vita's default; `off`, the game's renderers; `check`, both, the batched ones tinted magenta and half transparent over the game's. With `-hunt-heartbeat`, a HUNT_EFFECT_BATCH line every 600 frames, and one at each level start or restart for the meshes, materials and sprite shapes it no longer needs and frees. `compat/EffectBatch.cs`. |
 | `-hunt-rewired game\|log\|trim\|pad` | Rewired's controllers. The PS Vita's default disables its keyboard and mouse; `game` leaves them on; `log` logs its controllers (HUNT_REWIRED); `trim` logs and disables; `pad` also disables the joysticks without a name. `compat/RewiredTrim.cs`. |
 | `-hunt-rewired-axes all` | Rewired reads every axis and button of every joystick slot and updates Unity's mouse and its FixedUpdate, as the game does. The PS Vita's default reads the first 8 axes of the slots with a pad in them and skips the rest. `compat/RewiredInput.cs`. |
 | `-hunt-find <regex> <s>` | s seconds (default 5) after each scene load, log every renderer whose hierarchy path matches, active or not, with its state, bounds, mesh, materials and shaders (HUNT_FIND). |
