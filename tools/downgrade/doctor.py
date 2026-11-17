@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -694,7 +695,8 @@ def check_license(version, platform):
     fix = f'{SETUP} removes its license checks with unigate (or activate a license in the editor)'
     if not unity.exists():
         return Check(name, False, 'no editor', SETUP)
-    with tempfile.TemporaryDirectory(prefix='hunt-license-') as temp:
+    temp = tempfile.mkdtemp(prefix='hunt-license-')
+    try:
         log_path = Path(temp) / 'editor.log'
         try:
             result = subprocess.run(
@@ -727,11 +729,28 @@ def check_license(version, platform):
             kept.parent.mkdir(parents=True, exist_ok=True)
             kept.write_text(text, encoding='utf-8')
             problem += f' (log: {kept})'
+    finally:
+        remove_soon(temp)
     if problem is None:
         LICENSE_STAMP.parent.mkdir(parents=True, exist_ok=True)
         with LICENSE_STAMP.open('a', encoding='utf-8') as handle:
             handle.write(license_key(version, platform) + '\n')
     return Check(name, problem is None, problem or f'the editor starts in batch mode with the {platform} target', fix)
+
+
+def remove_soon(folder, seconds=10):
+    """Delete a folder the editor has just used: for a moment after it quits, Windows can refuse to delete
+    its project folder ("being used by another process"), which once stopped a first setup. Tried again
+    for a few seconds; if it still can't go, it stays in the temp folder rather than stop the setup."""
+    for _ in range(int(seconds / 0.5)):
+        try:
+            shutil.rmtree(folder)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            time.sleep(0.5)
+    shutil.rmtree(folder, ignore_errors=True)
 
 
 def license_key(version, platform):

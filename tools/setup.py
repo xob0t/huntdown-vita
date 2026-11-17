@@ -192,6 +192,19 @@ class Setup:
             self.say('unigate', 'uv is not on PATH; install it (https://docs.astral.sh/uv/), then run setup again')
             return
         script = download(url, EXTERNAL / 'unigate' / 'unigate.py', sha256)
+        # Its read-only check first: unigate's patch stops on an editor that is running (another
+        # project's build, say), even when there is nothing left to patch.
+        with progress.step('Checking the editor (unigate)'):
+            check = subprocess.run(
+                [uv, 'run', '--script', str(script), '--editor', str(unity.parent), '--check'],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        states = re.findall(r'^\s+\S+\s+off 0x[0-9A-Fa-f]+\s+(\S+)\s*$', check.stdout, re.MULTILINE)
+        if check.returncode == 0 and states and all(state == 'patched' for state in states):
+            self.say('unigate', 'already patched')
+            return
         with progress.step('Patching the editor (unigate)'):
             result = subprocess.run(
                 [uv, 'run', '--script', str(script), '--editor', str(unity.parent)],
