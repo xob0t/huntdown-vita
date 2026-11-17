@@ -322,6 +322,13 @@ namespace HuntCompat
                 if (Input.GetKeyDown(key)) Debug.Log("HUNT_INPUT down " + key);
                 if (Input.GetKeyUp(key)) Debug.Log("HUNT_INPUT up " + key);
             }
+            if (RewiredDirect.Answers(0))
+            {
+                // Rewired's frame is skipped (compat/RewiredDirect.cs): its actions as the game gets them.
+                foreach (string action in Actions)
+                    if (RewiredDirect.ButtonDown(0, action)) Debug.Log("HUNT_INPUT action " + action);
+                return;
+            }
             if (rewiredPlayer == null)
             {
                 Type reInput = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Rewired.ReInput", false)).FirstOrDefault(t => t != null);

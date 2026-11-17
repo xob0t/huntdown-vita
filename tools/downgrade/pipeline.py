@@ -361,6 +361,7 @@ COMPAT_SOURCES = [
             'Phases',
             'RewiredTrim',
             'RewiredInput',
+            'RewiredDirect',
         )
     ),
 ]
