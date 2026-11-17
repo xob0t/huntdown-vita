@@ -18,7 +18,7 @@ Work in progress, but playable. The VPK builds, and on the console the game runs
 
 ## Building
 
-You need Windows 10 or 11 on x64, Huntdown from Steam, about 20 GB of free disk space, and a console on HENkaku or Ensō with VitaShell.
+You need Windows 10 or 11 on x64, Huntdown from Steam, about 10 GB of free disk space, and a console on HENkaku or Ensō with VitaShell.
 
 1. Install [uv](https://docs.astral.sh/uv/): open PowerShell from the Start menu and run
 
@@ -36,7 +36,7 @@ You need Windows 10 or 11 on x64, Huntdown from Steam, about 20 GB of free disk 
 
    The VPK is `builds/hunt-2018.2.19f1-vita.vpk`. Install it with VitaShell.
 
-A first build takes about TBD minutes. It doesn't install Unity or need a Unity license: it downloads Unity 2018.2.19f1's installers and extracts the files the build reads, and Sony's PS Vita SDK 3.570 from archive.org, with AssetRipper, the .NET 8 SDK and Mono.Cecil. A rerun picks up where the last one stopped.
+A first build takes about 25 minutes and leaves about 6.5 GB in the folder. It doesn't install Unity or need a Unity license: it downloads Unity 2018.2.19f1's installers and extracts the files the build reads, and Sony's PS Vita SDK 3.570 from archive.org, with AssetRipper, the .NET 8 SDK and Mono.Cecil. A rerun picks up where the last one stopped.
 
 - `--game <folder>` reads the game from that folder, if it isn't in your Steam library.
 - `--vita-sdk <archive or folder>` uses your own copy of the SDK.

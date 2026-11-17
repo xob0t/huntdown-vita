@@ -210,6 +210,7 @@ The list is `BUILD_SWITCHES` in `tools/downgrade/common.py`, and there is one:
 
 | Step | Time |
 | --- | --- |
+| A first `uv run build.py` from the release ZIP, setup and downloads included | about 25 minutes |
 | A builder rebuild (`pipeline.py build`), the code module reused | about 10 minutes |
 | The builder's code module alone (`tools/builder/il2cpp.py`) after a code change | about 5 minutes |
 | An editor build (`--unity`), with the editor's import of every sound clip | 30 minutes or more |
@@ -220,8 +221,8 @@ The list is `BUILD_SWITCHES` in `tools/downgrade/common.py`, and there is one:
 Most of a builder run is encoding the sound into the bundles; most of a first editor build is the editor importing the game's 3,868 sound clips for the target, on one thread.
 A change that makes the editor import every clip again takes as long.
 
-The doctor asks for about 13 GB free on the repository's drive for a first PS Vita or Mono build, 14 GB for IL2CPP, and 4 to 5 GB for a rebuild, plus 3 GB for the export when several targets are built at once.
-Those figures were carried over from Crow Country's port and haven't been measured for Huntdown.
+A first `uv run build.py` from the release ZIP left 6.4 GB in the folder: 2.8 GB of work files, 1.5 GB in `builds/` (the build and its 521 MB VPK), 2.0 GB of tools in `tools/external` (Unity's files among them) and 0.2 GB of Python packages.
+The doctor asks for about 13 GB free on the repository's drive for a first PS Vita or Mono build, 14 GB for IL2CPP, and 4 to 5 GB for a rebuild, plus 3 GB for the export when several targets are built at once; those figures, carried over from Crow Country's port, leave room for the editor's builds.
 The editor with its modules wants another 5 GB in `%LOCALAPPDATA%`, and the PS Vita SDK takes about 0.6 GB.
 
 ### Reproducible outputs
