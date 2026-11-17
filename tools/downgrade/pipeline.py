@@ -1499,7 +1499,8 @@ def vita_app_files(build: Path):
         player[marker] = 0  # no trial watermark
     patcher_usse(player)
     yield 'eboot.bin', bytes(player)
-    art = livearea.generate()
+    with progress.step('Making the LiveArea art'):  # the store images, fetched once, and the PNGs
+        art = livearea.generate()
     skip = {'SymbolFiles', 'configuration.psp2path'}
     for path in sorted(build.rglob('*')):
         relative = path.relative_to(build)

@@ -668,13 +668,14 @@ def authenticode(path: Path):
         '$s = Get-AuthenticodeSignature -LiteralPath $env:SETUP_SIGNED_FILE; '
         '$s.Status.ToString(); if ($s.SignerCertificate) { $s.SignerCertificate.Subject }'
     )
-    result = subprocess.run(
-        ['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
-        capture_output=True,
-        text=True,
-        env={**os.environ, 'SETUP_SIGNED_FILE': str(path)},
-        check=False,
-    )
+    with progress.step(f'Checking the signature of {path.name}'):
+        result = subprocess.run(
+            ['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
+            capture_output=True,
+            text=True,
+            env={**os.environ, 'SETUP_SIGNED_FILE': str(path)},
+            check=False,
+        )
     lines = result.stdout.strip().splitlines()
     return (lines[0].strip() if lines else 'unknown'), (lines[1].strip() if len(lines) > 1 else '')
 
