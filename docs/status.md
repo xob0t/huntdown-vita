@@ -64,10 +64,9 @@ Input:
 ## Open issues
 
 - The two logo videos at start (H.264 MP4) are skipped: the PS Vita's Unity has no video player, and HuntCompat's stand-in ends a video that has no converted clip at once.
-- The rebuilt level bundles are about twice the size of the game's, which are LZ4HC; the editor writes LZ4.
-- No level has been played to its end.
+- The rebuilt level bundles are about twice the size of the game's, which are LZ4HC; the build writes LZ4.
+- The first area has been played through on the console; the later ones haven't been played to their end.
 - Loading a level takes about 15 s on the PS Vita: 9 s of its sheets, read synchronously (the loading screen at 1 to 10 fps), then 5 s of its sound bundles, one after the other.
-- The main menu offers EXIT GAME, a PC option.
 - On the PS Vita the cutscene, title and menus hold 60 fps, with frames of 50-60 ms when a screen opens, and one frame of about 0.12 s each when the global sound bundle (at the splash) and the title's level sound bundles finish loading.
 - The black screen at startup is about 10 s: 4.8 s of the game's own loading and 5 s of the sheets read ahead.
 - The levels' sheets are uncompressed and fill the PS Vita's video memory (CDRAM, 5 to 8 MB free in a level, from 64 MB at the title); the rest goes to main memory, of which 165 MB or more stay free in every level tried.

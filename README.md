@@ -10,24 +10,40 @@ Work in progress, but playable. The VPK builds, and on the console the game runs
 
 ## How it differs from the PC release
 
-- The game's AssetBundles (its levels, area art and sound) are rebuilt for the target by the editor, under the same names.
-- On the PS Vita, sound clips stay compressed in memory as HEVAG, the console's own format, instead of being decompressed when loaded, and the music streams.
+- The game's AssetBundles (its levels, area art and sound) are rebuilt for the target, under the same names.
+- On the PS Vita, sound clips stay compressed in memory as HEVAG, the console's own format, instead of being decompressed when loaded, and the music streams. Wolfmother's voice in the mission briefings is the exception: it is PCM, decompressed when loaded, since her mouth moves with its samples.
 - The pad goes through Rewired's PS Vita controller: R dashes, L does what Left Shoulder 1 does on a PC pad.
 - Steamworks is replaced with a stub, so no player signs in to Steam.
+- Local co-op is off: the second player can't join, and the menus leave out 2 PLAYERS and JOIN PLAYER 2. The resolution menu and the entries that quit the game are left out too, since the PS Vita has no use for them.
 
 ## Building
 
-You need Windows 10 or 11, Huntdown from Steam, about 20 GB of free disk space, and a console on HENkaku or Ensō with VitaShell. The setup is the same as Crow Country's port, and its [build guide](https://github.com/xob0t/crow-country-vita/blob/main/docs/build.md) covers what it installs: Unity 2018.2.19f1 with its PS Vita module, a patch to that editor's license check made with [unigate](https://github.com/xob0t/unigate), Sony's PS Vita SDK 3.570, AssetRipper, the .NET 8 SDK and Mono.Cecil.
+You need Windows 10 or 11 on x64, Huntdown from Steam, about 20 GB of free disk space, and a console on HENkaku or Ensō with VitaShell.
 
-1. Install [uv](https://docs.astral.sh/uv/).
-2. Download [huntdown-vita.zip](https://github.com/xob0t/huntdown-vita/releases/latest/download/huntdown-vita.zip) and extract it (or clone this repository). In its folder, open a terminal and run:
+1. Install [uv](https://docs.astral.sh/uv/): open PowerShell from the Start menu and run
 
    ```powershell
-   uv run build.py                 # the PS Vita app: builds/hunt-2018.2.19f1-vita.vpk
-   uv run build.py --windows       # a Windows test player: builds/hunt-2018.2.19f1/Huntdown.exe
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
 
-`build.py` runs the setup for your targets, then the pipeline's stages (`rip`, `project`, `build`, `package`) in `tools/downgrade/pipeline.py`. A rerun picks up where the last one stopped.
+2. Download [huntdown-vita.zip](https://github.com/xob0t/huntdown-vita/releases/latest/download/huntdown-vita.zip), right-click it and choose **Extract All** (or clone this repository).
+
+3. Open the extracted `huntdown-vita` folder, right-click in it, choose **Open in Terminal** (on Windows 10: Shift + right-click, **Open PowerShell window here**), and run:
+
+   ```powershell
+   uv run build.py
+   ```
+
+   The VPK is `builds/hunt-2018.2.19f1-vita.vpk`. Install it with VitaShell.
+
+A first build takes about TBD minutes. It doesn't install Unity or need a Unity license: it downloads Unity 2018.2.19f1's installers and extracts the files the build reads, and Sony's PS Vita SDK 3.570 from archive.org, with AssetRipper, the .NET 8 SDK and Mono.Cecil. A rerun picks up where the last one stopped.
+
+- `--game <folder>` reads the game from that folder, if it isn't in your Steam library.
+- `--vita-sdk <archive or folder>` uses your own copy of the SDK.
+- `--unity` builds the VPK with the Unity editor instead. It installs the editor with its PS Vita module and patches its license check with [unigate](https://github.com/xob0t/unigate).
+- `--windows` builds a Windows test player with the editor: `builds/hunt-2018.2.19f1/Huntdown.exe`.
+
+[docs/build.md](docs/build.md) covers the setup, the pipeline's stages and the options; [docs/builder.md](docs/builder.md) the editor-free builder.
 
 ## License
 
