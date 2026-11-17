@@ -148,12 +148,21 @@ INVALID_HANDLE = ctypes.c_void_p(-1).value
 
 
 def clear_stale(name):
-    """Remove the lock if it is stale. Only the file that was judged stale goes: it is opened, read and
-    judged through one handle, and deleted through a second one ReOpenFile makes from it (the same
-    file, whatever the name has become meanwhile). Before (21 Oct) it was read, then unlinked by name:
-    two waiters could both find the same stale lock, the first remove it and take the lock, and the
-    second then remove that new lock and take it too. The first handle shares everything, so a reader
-    (holder_of) never fails on it; the second exists only for a stale lock."""
+    """Remove the lock if it is stale. Only the file that was judged stale goes (delete_if). Before
+    (21 Oct) it was read, then unlinked by name: two waiters could both find the same stale lock, the
+    first remove it and take the lock, and the second then remove that new lock and take it too."""
+    text, outcome = delete_if(name, stale_text)
+    if outcome == 'deleted':
+        print(f'{name}: removed the lock of {first_line(text)}, whose lock.py process has ended', flush=True)
+
+
+def delete_if(name, judge):
+    """Delete the lock if judge(its text) says so, judging and deleting the same file: it is opened,
+    read and judged through one handle, and deleted through a second one ReOpenFile makes from it (the
+    same file, whatever the name has become meanwhile). The first handle shares everything, so a
+    reader (holder_of) never fails on it; the second is refused while another job reads the file (it
+    opens it without delete sharing). The text read (None for none) and what became of the file:
+    'free', 'kept', 'deleted' or 'busy' (refused)."""
     kernel32 = ctypes.windll.kernel32
     kernel32.CreateFileW.restype = ctypes.c_void_p
     uint, pointer = ctypes.c_uint32, ctypes.c_void_p
@@ -165,23 +174,22 @@ def clear_stale(name):
     kernel32.CloseHandle.argtypes = [pointer]
     handle = kernel32.CreateFileW(str(path(name)), GENERIC_READ, SHARE_ALL, None, OPEN_EXISTING, 0, None)
     if handle in (None, INVALID_HANDLE):
-        return  # free, or being deleted
+        return None, 'free'  # free, or being deleted
     try:
         buffer, size = ctypes.create_string_buffer(4096), ctypes.c_ulong()
         if not kernel32.ReadFile(handle, buffer, len(buffer), ctypes.byref(size), None):
-            return
+            return None, 'busy'
         text = buffer.raw[: size.value].decode('utf-8', errors='replace').replace('\r\n', '\n')  # as read_text
-        if not stale_text(text):
-            return
-        # Refused while another job reads the file (it opens it without delete sharing): the next poll
-        # tries again.
+        if not judge(text):
+            return text, 'kept'
         deleting = kernel32.ReOpenFile(handle, GENERIC_READ | DELETE, SHARE_READ_DELETE, 0)
         if deleting in (None, INVALID_HANDLE):
-            return
+            return text, 'busy'
         try:
             delete = ctypes.c_ubyte(1)  # FILE_DISPOSITION_INFO.DeleteFile: the file goes when the handles close
-            if kernel32.SetFileInformationByHandle(deleting, FILE_DISPOSITION_INFO, ctypes.byref(delete), 1):
-                print(f'{name}: removed the lock of {first_line(text)}, whose lock.py process has ended', flush=True)
+            if not kernel32.SetFileInformationByHandle(deleting, FILE_DISPOSITION_INFO, ctypes.byref(delete), 1):
+                return text, 'busy'
+            return text, 'deleted'
         finally:
             kernel32.CloseHandle(deleting)
     finally:
@@ -293,15 +301,25 @@ def owner(text):
 
 
 def release(name, holder):
-    text = holder_of(name)
-    if text is None:
-        return 0
+    """Remove the lock if the holder's name is its owner's. The lock judged is the lock removed
+    (delete_if): read, then unlinked by name, a second release of the same lock running at the same
+    time would have removed the lock another job took in between."""
     # The whole name must match: "a" must not release "ab: ..." (or "" anyone's lock).
-    if not owner(holder) or owner(text) != owner(holder):
-        print(f'{name} is held by someone else: {text}')
-        return 1
-    remove(path(name))
-    return 0
+    def ours_to_release(text):
+        held = first_line(text)
+        return held is not None and bool(owner(holder)) and owner(held) == owner(holder)
+
+    for attempt in range(40):
+        text, outcome = delete_if(name, ours_to_release)
+        if outcome in ('free', 'deleted'):
+            return 0
+        if outcome == 'kept':
+            if first_line(text) is None:
+                return 0  # an empty file: being written by take, nobody's yet (as when free)
+            print(f'{name} is held by someone else: {first_line(text)}')
+            return 1
+        time.sleep(0.05)  # another job is reading it (holder_of), for a moment
+    sys.exit(f'{name}: could not remove the lock, another job keeps it open')
 
 
 def held_here():
