@@ -104,11 +104,13 @@ def project_folder(version, platform):
     return WORK / f'hunt-{version}{vita_suffix(platform)}'
 
 
-def build_folder(platform, backend='mono', scenes=False, version=TARGET):
-    """builds/hunt-<version>[-vita][-il2cpp][-scenes]: a player built by pipeline.py build (a Windows
-    player is Huntdown.exe in it); scenes: a test build of some scenes (build --scenes)."""
+def build_folder(platform, backend='mono', scenes=False, version=TARGET, unity=False):
+    """builds/hunt-<version>[-vita[-unity]][-il2cpp][-scenes]: a player built by pipeline.py build (a Windows
+    player is Huntdown.exe in it); scenes: a test build of some scenes (build --scenes); unity: a PS Vita
+    player the editor built (build --unity), kept apart from the one the builder makes."""
     il2cpp = '-il2cpp' if platform == 'windows' and backend == 'il2cpp' else ''
-    return BUILDS / f'hunt-{version}{vita_suffix(platform)}{il2cpp}{"-scenes" if scenes else ""}'
+    editor = '-unity' if platform == 'vita' and unity else ''
+    return BUILDS / f'hunt-{version}{vita_suffix(platform)}{editor}{il2cpp}{"-scenes" if scenes else ""}'
 
 
 SOURCE_VERSION = '2019.4.13f1'
@@ -151,9 +153,17 @@ def editor_folder(version):
     return EDITORS / version / 'Editor'
 
 
+def unity_files(version):
+    """Where setup.py extracts, without installing anything, the parts of Unity's editor and PS Vita
+    module installers the pipeline and the editor-free build read (laid out as the editor's folder)."""
+    return EXTERNAL / f'unity-{version}'
+
+
 def editor_data(version):
-    """The installed editor's Editor/Data folder."""
-    return editor_folder(version) / 'Data'
+    """Unity's Editor/Data folder: the files setup.py extracted from Unity's installers, or else an
+    installed editor's (the same files)."""
+    extracted = unity_files(version) / 'Editor' / 'Data'
+    return extracted if extracted.exists() else editor_folder(version) / 'Data'
 
 
 def editor_exe(version):

@@ -1,6 +1,8 @@
 # Building
 
-The pipeline turns your copy of Huntdown into a Unity 2018.2 project, and the Unity editor builds a PS Vita app or a Windows test player from it.
+The pipeline turns your copy of Huntdown into a Unity 2018.2 project, and builds a PS Vita app or a Windows test player from it.
+The PS Vita app is built without the Unity editor, by [the builder](builder.md), from files setup extracts from Unity's installers: nothing of Unity is installed, and no Unity license is needed.
+The Windows players, and the PS Vita app with `--unity`, are built by the Unity editor.
 The pipeline only reads the game.
 It writes the export and the Unity projects to `work/`, the players and the VPK to `builds/`, and the logs to `artifacts/`. Every step shows a bar or a spinner while it runs, with what it is on; the tools it runs (the C# compiler, the rewriter, UnityLinker, IL2CPP, the native plugin's build) write their output to logs, `artifacts/downgrade/tools/` for the small ones, and a step that fails prints its log's last lines.
 Prose here is one sentence per line, so a diff shows only the sentences that changed.
@@ -15,7 +17,8 @@ uv run build.py --windows       # a Windows test player: builds/hunt-2018.2.19f1
 
 `build.py` runs the setup for your targets (step 1), then the pipeline's stages in order (step 2).
 After a failure or a change, run it again.
-It skips what is installed and what is up to date, and the editor imports only what changed.
+It skips what is installed and what is up to date.
+The builder writes the player's data and AssetBundles again on each run, and reuses the code module when the code hasn't changed; the editor imports only what changed.
 
 ## 1. Set up
 
@@ -39,21 +42,22 @@ Setup can run again at any time: it installs what is missing and skips the rest.
 In this order, it:
 
 - Runs `uv sync` for the Python packages.
-- Installs the Unity 2018.2.19f1 editor into `%LOCALAPPDATA%\Unity\Editors\2018.2.19f1`, with the Windows IL2CPP module for `--il2cpp` and the PS Vita module for `--vita`.
+- For the Windows players, and with `--vita --unity`, installs the Unity 2018.2.19f1 editor into `%LOCALAPPDATA%\Unity\Editors\2018.2.19f1`, with the Windows IL2CPP module for `--il2cpp` and the PS Vita module for `--vita --unity`.
+- With `--vita`, downloads the editor's and the PS Vita module's installers and extracts what the pipeline and the builder read (CGIncludes, the engine and class libraries, IL2CPP, the built-in resources, the PS Vita player), about 1.2 GB, into `tools/external/unity-2018.2.19f1`, with 7-Zip: an installed one, or 7-Zip's own package from GitHub. Nothing is installed or run. It also installs the current Visual C++ runtime when Windows has an older one: the builder's texture encoder crashes in the 2015 runtime that Unity 2018's installer brings.
 - Downloads AssetRipper 2.0.0 into `tools/external/assetripper-2.0.0`, the .NET 8 SDK 8.0.425 into `tools/external/dotnet`, and Mono.Cecil 0.10.0-beta6 from NuGet.
 - Finds [the game](#the-game).
-- With `--vita`, installs [the PS Vita SDK](#the-ps-vita-sdk) and its tools.
-- Removes the editor's license checks ([the Unity license](#the-unity-license)).
-- Turns on the editor's local cache server (Preferences > Cache Server: Local, 40 GB), unless you set that preference yourself. It is a setting of every Unity editor on the machine; `--no-cache-server` leaves it alone.
-- Starts the editor once in batch mode, then prints [the doctor's checklist](#checking-the-setup).
+- With `--vita`, installs [the PS Vita SDK](#the-ps-vita-sdk), and with `--unity` its tools.
+- When it installed the editor: removes the editor's license checks ([the Unity license](#the-unity-license)), turns on the editor's local cache server (Preferences > Cache Server: Local, 40 GB) unless you set that preference yourself (it is a setting of every Unity editor on the machine; `--no-cache-server` leaves it alone), and starts the editor once in batch mode.
+- Prints [the doctor's checklist](#checking-the-setup).
 
-Setup checks every download against a pinned hash, and runs a Unity installer only if it carries Unity Technologies' Authenticode signature.
+Setup checks every download against a pinned hash, and runs a Unity installer, or extracts files from it, only if it carries Unity Technologies' Authenticode signature; the Visual C++ Redistributable must carry Microsoft's.
 Installers that need administrator rights ask for them.
 
 | Option | Effect |
 | --- | --- |
 | `--il2cpp` | Also install the editor's Windows IL2CPP module. An IL2CPP player also needs Visual Studio 2022 Build Tools with "Desktop development with C++"; the doctor checks for them. |
-| `--vita` | Also install the PS Vita module, the PS Vita SDK, Target Manager Server and Publishing Tools. |
+| `--vita` | The PS Vita build: extract Unity's files from its installers (no editor) and install the PS Vita SDK. |
+| `--unity` | With `--vita`, what the editor's PS Vita build (`pipeline.py build --unity`) needs instead: the editor and its PS Vita module, Target Manager Server, Publishing Tools, and the license check. |
 | `--vita-sdk <path>` | Use your own PS Vita SDK, an archive or a folder, instead of the download. Implies `--vita`. |
 | `--vita-sdk-dir <dir>` | Extract the archive or copy the folder here. The default for an archive is `C:\vitasdk`; a folder is used where it is. |
 | `--vita-host <address>` | Set `HUNT_VITA_HOST`, the console's address, for `vita.py`. |
@@ -87,16 +91,18 @@ With `--vita`, setup looks for an SDK in `SCE_PSP2_SDK_DIR`, in `C:\vitasdk` and
 If it finds none, it downloads `PSVITA.zip` (350 MB) from archive.org's [copy of the SDK 3.570 DevNet release](https://archive.org/details/psvita-sdk-3.570-devnet-full), extracts it to `C:\vitasdk\PSVITA\sdk`, and applies Sony's `psp2cgc` and `libc` patches from the same item, which bring it to 3.570.071.
 An SDK passed with `--vita-sdk` must be 3.570 or later and have the tools Unity checks for before a build (`psp2snc`, `psp2ld`, `arm-eabi-as`, `psp2snarl`, `psp2bin` and `psp2psarc`).
 
-The editor's PS Vita build also runs `psp2ctrl` and `psp2run` from Target Manager Server, and `psp2pubcmd` from Publishing Tools, under `SCE_ROOT_DIR` (usually `C:\Program Files (x86)\SCE`).
-If they are missing, setup offers to run their installers, from the SDK's folder or from the same archive.org item.
+The builder uses the SDK alone.
+The editor's PS Vita build (`--unity`) also runs `psp2ctrl` and `psp2run` from Target Manager Server, and `psp2pubcmd` from Publishing Tools, under `SCE_ROOT_DIR` (usually `C:\Program Files (x86)\SCE`).
+With `--vita --unity`, if they are missing, setup offers to run their installers, from the SDK's folder or from the same archive.org item.
 Publishing Tools needs .NET Framework 3.5, which setup turns on first.
 
-Setup sets `SCE_PSP2_SDK_DIR` and `SCE_ROOT_DIR` for your user.
+Setup sets `SCE_PSP2_SDK_DIR`, and with `--unity` `SCE_ROOT_DIR`, for your user.
 Shells opened before that don't see them; `build.py` reads both from the registry, but if you run `pipeline.py build` yourself, use a new shell.
 
 ### The Unity license
 
-Every build runs the editor in batch mode, and Unity hides the PS Vita target unless the license includes console access.
+Only the editor's builds need this: the Windows players, and the PS Vita app with `--unity`.
+They run the editor in batch mode, and Unity hides the PS Vita target unless the license includes console access.
 So setup patches `Unity.exe` with [unigate](https://github.com/xob0t/unigate), downloaded at a pinned commit into `tools/external/unigate`, which keeps the original beside it.
 Close Unity before you run setup, since Windows can't write the `Unity.exe` of a running editor.
 With a license of your own, pass `--no-unigate`.
@@ -114,6 +120,7 @@ Setup then starts the editor once with an empty project, which takes about a min
 ```powershell
 uv run tools/setup.py doctor                                 # every target
 uv run tools/setup.py doctor --target vita                   # one target: vita, windows or il2cpp
+uv run tools/setup.py doctor --target vita --unity           # the editor's PS Vita build
 ```
 
 The doctor prints a checklist of what the targets need, with the command that fixes each missing item, and the free space on the repository's drive.
@@ -124,9 +131,10 @@ Items marked `optional` don't stop a build: Mono.Cecil and USCSandbox (fetched o
 
 ```powershell
 uv run build.py                       # the PS Vita app
+uv run build.py --unity               # the PS Vita app, built by the Unity editor
 uv run build.py --windows             # a Windows player with Mono
 uv run build.py --il2cpp              # a Windows player with IL2CPP, which runs the code as the PS Vita does
-uv run build.py --vita --windows      # both; the two editors build side by side
+uv run build.py --vita --windows      # both, side by side
 uv run build.py --dry-run             # print the setup command and the stages, run nothing
 ```
 
@@ -134,8 +142,8 @@ uv run build.py --dry-run             # print the setup command and the stages, 
 
 1. `rip`: AssetRipper exports the game as a 2018.2 project into `work/rip-2018.2.19f1`, shared by the targets. `build.py` skips it while the export comes from the same game files, AssetRipper and settings.
 2. `project`: assembles the Unity project in `work/hunt-2018.2.19f1-vita`, or `work/hunt-2018.2.19f1` for Windows. It rewrites the game's assemblies, decompiles the shaders and applies the asset, bundle and sprite rules.
-3. `build`: the editor imports the project in batch mode and builds the player into `builds/hunt-2018.2.19f1-vita`, or `builds/hunt-2018.2.19f1/Huntdown.exe` (`builds/hunt-2018.2.19f1-il2cpp/Huntdown.exe` for IL2CPP). It also makes the game's AssetBundles again for the target.
-4. `package`, PS Vita only: makes `builds/hunt-2018.2.19f1-vita.vpk` with the title ID `HUNT00001`, with LiveArea art from the game's Steam store images.
+3. `build`: builds the player and makes the game's AssetBundles again for the target. The builder writes the PS Vita player into `builds/hunt-2018.2.19f1-vita` ([builder.md](builder.md)). With `--unity`, and for the Windows players, the editor imports the project in batch mode and builds the player into `builds/hunt-2018.2.19f1-vita-unity`, or `builds/hunt-2018.2.19f1/Huntdown.exe` (`builds/hunt-2018.2.19f1-il2cpp/Huntdown.exe` for IL2CPP).
+4. `package`, PS Vita only: makes `builds/hunt-2018.2.19f1-vita.vpk` (`-vita-unity.vpk` with `--unity`) with the title ID `HUNT00001`, with LiveArea art from the game's Steam store images.
 
 `build.py` holds a build lock from `tools/downgrade/lock.py` for the whole run: `vita-build` when the targets include the PS Vita, `pc-build` otherwise.
 If another job runs the pipeline, it waits.
@@ -143,6 +151,7 @@ If another job runs the pipeline, it waits.
 | Option | Effect |
 | --- | --- |
 | `--vita`, `--windows`, `--il2cpp` | The targets. Without any, `build.py` builds the PS Vita app. |
+| `--unity` | Build the PS Vita app with the Unity editor instead of the builder. Setup then installs the editor and patches its license check. |
 | `--game <folder>` | The game's folder, if it isn't in Steam's default folder. Setup saves it in `HUNT_GAME`. |
 | `--vita-sdk <path>`, `--no-unigate` | Passed to setup. |
 | `--skip-setup` | Go straight to the pipeline. |
@@ -160,15 +169,16 @@ uv run tools/downgrade/pipeline.py rip                       # always exports ag
 uv run tools/downgrade/pipeline.py code                      # rewrite the game's assemblies, list what doesn't resolve
 uv run tools/downgrade/pipeline.py link                      # Unity's linker on the rewritten assemblies, without the editor
 uv run tools/downgrade/pipeline.py project                   # assemble work/hunt-2018.2.19f1-vita
-uv run tools/downgrade/pipeline.py build                     # import and build with the Unity editor
-uv run tools/downgrade/pipeline.py package                   # builds/hunt-2018.2.19f1-vita.vpk
-uv run tools/downgrade/pipeline.py quickcode                 # code changes only, into the last full PS Vita build
+uv run tools/downgrade/pipeline.py build                     # the PS Vita player, with the builder
+uv run tools/downgrade/pipeline.py build --unity             # the PS Vita player, imported and built by the editor
+uv run tools/downgrade/pipeline.py package                   # builds/hunt-2018.2.19f1-vita.vpk (--unity: -vita-unity.vpk)
+uv run tools/downgrade/pipeline.py quickcode                 # code changes only, into the last editor build (-vita-unity)
 ```
 
 For Windows players, pass `--platform windows` to `code`, `link`, `project` and `build`, and `--backend il2cpp` to `build` for IL2CPP.
 `loadcheck` loads every rewritten type and compiles every method under the 2018 Mono, so it needs a Windows Mono player.
-`build --development` makes Unity's development player.
-`build --scenes <a,b>` makes a test build of only some of the build settings' scenes into `builds/hunt-2018.2.19f1-vita-scenes`; Huntdown's build has two scenes, and its levels are AssetBundles.
+`build --unity --development` makes Unity's development player.
+`build --unity --scenes <a,b>` makes a test build of only some of the build settings' scenes into `builds/hunt-2018.2.19f1-vita-scenes`; Huntdown's build has two scenes, and its levels are AssetBundles.
 `--game <folder>` reads the game from another folder.
 
 Other jobs on the machine share `work/`, `builds/` and `artifacts/`, so run each stage under a build lock:
@@ -181,7 +191,8 @@ Use `pc-build` for a Windows stage.
 A stage that writes the PS Vita build (a PS Vita `build`, `package`, `quickcode`) needs `vita-build`, and stops under `pc-build`.
 Without a lock, `pipeline.py` stops if another run holds one, and warns otherwise.
 
-`quickcode` is for changes to the rewriter or HuntCompat: [vita.md](vita.md#code-changes-without-a-full-build) describes it and what it refuses.
+For a code change (the rewriter or HuntCompat) to the builder's build, `tools/builder/il2cpp.py` rebuilds just the code module, after `pipeline.py code` and `project`; a whole `build` also writes the data again.
+`quickcode` does the same for the editor's build: [vita.md](vita.md#code-changes-without-a-full-build) describes it and what it refuses.
 
 ### Build switches
 
@@ -199,12 +210,14 @@ The list is `BUILD_SWITCHES` in `tools/downgrade/common.py`, and there is one:
 
 | Step | Time |
 | --- | --- |
-| A first full build, with the editor's import of every sound clip | 30 minutes or more |
-| A rerun that changes a few assets | 4 to 5 minutes |
-| `quickcode` | about 100 s |
+| A builder rebuild (`pipeline.py build`), the code module reused | about 10 minutes |
+| The builder's code module alone (`tools/builder/il2cpp.py`) after a code change | about 5 minutes |
+| An editor build (`--unity`), with the editor's import of every sound clip | 30 minutes or more |
+| An editor rerun that changes a few assets | 4 to 5 minutes |
+| `quickcode` (the editor's build) | about 100 s |
 | `vita.py sync` of a code change | seconds |
 
-Most of a first build is the editor importing the game's 3,868 sound clips for the target, on one thread.
+Most of a builder run is encoding the sound into the bundles; most of a first editor build is the editor importing the game's 3,868 sound clips for the target, on one thread.
 A change that makes the editor import every clip again takes as long.
 
 The doctor asks for about 13 GB free on the repository's drive for a first PS Vita or Mono build, 14 GB for IL2CPP, and 4 to 5 GB for a rebuild, plus 3 GB for the export when several targets are built at once.
@@ -230,11 +243,12 @@ After that, `vita.py sync` updates the app from the PC.
 `build.py` stops at the first failure and says what failed.
 Fix it and run `build.py` again: it picks up where it stopped.
 
-- Setup: a download whose hash doesn't match is deleted, and setup stops; run it again. "unigate could not patch" usually means Unity is running. "To do" lines at the end are steps setup couldn't take, such as an offer you declined; `build.py` won't build until they are done.
+- Setup: a download whose hash doesn't match is deleted, and setup stops; run it again. "unigate could not patch" means Unity is running while the editor still needs the patch; close it. "To do" lines at the end are steps setup couldn't take, such as an offer you declined; `build.py` won't build until they are done.
 - The game: "another release than the rules were written for" means your `Assembly-CSharp.dll` differs from Steam build 20193748's. It may still build; if a rule stops in `project`, update the game or have Steam verify its files. "built with Unity ..., the rules expect 2019.4.13f1" has the same fix. If the doctor finds no `Huntdown.exe`, run `uv run tools/setup.py --game <folder>`.
 - `rip`: "AssetRipper did not start" or "AssetRipper export produced no project": check `tools/external/assetripper-2.0.0` and `artifacts/downgrade/assetripper.log`.
 - `project`: "No .NET 8 SDK" means `tools/external/dotnet` is missing; run setup. A rewriter failure names the assemblies that don't resolve, with its log in `artifacts/downgrade/rewrite-<version>-<platform>.log`. "expected at least ... The export changed or the rule no longer matches it" means a rule matched less than on the export it was written for, usually another release of the game.
-- `build`: the editor's log is `artifacts/downgrade/build-<version>-<platform>.log` (with `-il2cpp` or `-scenes` for those builds), and the pipeline prints a summary of it. A good build logs `DOWNGRADE_BUILD Succeeded errors=0`; the stage stops on any error in the build report and lists them, and they are also in `<player>.messages.txt` beside the player. "A Unity editor has ... open" means an editor still has the project open. If the editor stops at once, run `uv run tools/setup.py doctor --license`; a failed check leaves its log in `work/license-check.log`. If IL2CPP or the PS Vita steps fail, run `uv run tools/setup.py doctor --target vita`, from a new shell.
-- `quickcode`: "No saved PS Vita build to update" means there is no full PS Vita build yet; run `pipeline.py build --platform vita` once.
+- `build` with the builder: each step names what it is on, and a failure prints the step and the file. [builder.md](builder.md) lists the checks that compare its output with the editor's.
+- `build` with the editor: the editor's log is `artifacts/downgrade/build-<version>-<platform>.log` (with `-il2cpp` or `-scenes` for those builds), and the pipeline prints a summary of it. A good build logs `DOWNGRADE_BUILD Succeeded errors=0`; the stage stops on any error in the build report and lists them, and they are also in `<player>.messages.txt` beside the player. "A Unity editor has ... open" means an editor still has the project open. If the editor stops at once, run `uv run tools/setup.py doctor --license`; a failed check leaves its log in `work/license-check.log`. If IL2CPP or the PS Vita steps fail, run `uv run tools/setup.py doctor --target vita`, from a new shell.
+- `quickcode`: "No saved PS Vita build to update" means there is no full editor build yet; run `pipeline.py build --unity` once.
 - Locks: "Held by another run" means another pipeline holds a build lock; `uv run tools/downgrade/lock.py status` shows who.
 - `vita.py`: "Set HUNT_VITA_HOST" means the console's address is not set; run `uv run tools/setup.py --vita-host <address>`.

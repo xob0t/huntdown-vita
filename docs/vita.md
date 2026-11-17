@@ -1,6 +1,6 @@
 # PS Vita
 
-The app is Unity's own PS Vita player, built by the Unity 2018.2.19f1 editor with its PS Vita module and Sony's PS Vita SDK 3.570.
+The app is Unity 2018.2.19f1's own PS Vita player, built without the editor by [the builder](builder.md) from Unity's files and Sony's PS Vita SDK 3.570 (with `--unity`, by the editor with its PS Vita module).
 [build.md](build.md) sets them up and finds the game.
 Prose here is one sentence per line, so a diff shows only the sentences that changed.
 
@@ -214,15 +214,23 @@ uv run tools/downgrade/vita.py args --              # clears the flags: args.txt
 
 ## Code changes without a full build
 
-A full PS Vita build runs `project` and `build`, which take half an hour or more when the editor imports the sound again ([build.md](build.md#time-and-disk-space)).
-For a change to the rewriter or HuntCompat, `quickcode` takes about 100 s instead.
+For a change to the rewriter or HuntCompat, `pipeline.py project` rewrites the assemblies into the project, and `tools/builder/il2cpp.py` rebuilds only the code module into the builder's build, recompiling only the C++ files whose content changed (about 5 minutes; a whole `build` takes about 10, as it writes the data again):
+
+```powershell
+uv run tools/downgrade/lock.py run vita-build "me: what for" --wait 1800 -- uv run tools/downgrade/pipeline.py project
+uv run tools/downgrade/lock.py run vita-build "me: what for" --wait 1800 -- uv run tools/builder/il2cpp.py
+uv run tools/downgrade/vita.py run
+```
+
+The editor's build (`build --unity`) takes half an hour or more when the editor imports the sound again ([build.md](build.md#time-and-disk-space)).
+For it, `quickcode` takes about 100 s instead.
 It rewrites the assemblies and replays the last full build's UnityLinker and IL2CPP steps on the inputs that build saved in `work/vita-code-stage`.
-Then it puts the new `il2CppAssemblies.suprx` and `global-metadata.dat` in `builds/hunt-2018.2.19f1-vita`, with the HuntClock plugin and `boot.config`.
-`vita.py sync` uploads the changed files in seconds.
+Then it puts the new `il2CppAssemblies.suprx` and `global-metadata.dat` in `builds/hunt-2018.2.19f1-vita-unity`, with the HuntClock plugin and `boot.config`.
+`vita.py sync --build builds/hunt-2018.2.19f1-vita-unity` uploads the changed files in seconds.
 
 ```powershell
 uv run tools/downgrade/lock.py run vita-build "me: what for" --wait 1800 -- uv run tools/downgrade/pipeline.py quickcode
-uv run tools/downgrade/vita.py run
+uv run tools/downgrade/vita.py run --build builds/hunt-2018.2.19f1-vita-unity
 uv run tools/downgrade/vita.py log --tail 40
 ```
 
