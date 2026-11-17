@@ -329,7 +329,9 @@ partial class DowngradeAssemblies
     // - The main menu's StartMenu.Init and the pause menus' PauseMenu.Init and MapPauseMenu.Init number their entries
     //   with num++; 2 PLAYERS' (p2 = num++) and JOIN PLAYER 2's (changePlayer = num++) become
     //   <field> = Menus.TwoPlayerEntry(num), num += Menus.TwoPlayerEntries(). Without p2 the main menu's first entry
-    //   is the game's START GAME instead of 1 PLAYER (StartMenu.GetStartGameText).
+    //   is the game's START GAME instead of 1 PLAYER (StartMenu.GetStartGameText). The main menu's EXIT GAME
+    //   (exitGame = num++) and the pause menu's quit menu's EXIT TO DESKTOP (AbandonGameMenu, exitToDesktop = num++)
+    //   go the same way through Menus.QuitEntry and Menus.QuitEntries.
     // - VideoMenu: Init's entries go through Menus.VideoChoices before the store to menuChoices, each read of
     //   selectedNr through Menus.VideoIndex, and each constant index of menuChoices[...] and UpdateSelection(...)
     //   through Menus.VideoShown.
@@ -357,7 +359,12 @@ partial class DowngradeAssemblies
         ReturnAtStartIf(prompt, OpCodes.Brfalse, Instruction.Create(OpCodes.Call, CompatMethod(module, "Menus", "PromptPlayerTwo")));
         count++;
 
-        foreach (string[] entry in new[] { new[] { "StartMenu", "p2" }, new[] { "PauseMenu", "changePlayer" }, new[] { "MapPauseMenu", "changePlayer" } })
+        foreach (string[] entry in new[]
+                 {
+                     new[] { "StartMenu", "p2", "TwoPlayer" }, new[] { "PauseMenu", "changePlayer", "TwoPlayer" },
+                     new[] { "MapPauseMenu", "changePlayer", "TwoPlayer" }, new[] { "StartMenu", "exitGame", "Quit" },
+                     new[] { "AbandonGameMenu", "exitToDesktop", "Quit" }
+                 })
         {
             string name = entry[0];
             TypeDefinition menu = GameType(module, name);
@@ -371,8 +378,8 @@ partial class DowngradeAssemblies
             if (step == null || step.OpCode != OpCodes.Ldc_I4_1 || step.Next.OpCode != OpCodes.Add || !step.Next.Next.OpCode.Name.StartsWith("stloc"))
                 throw new InvalidOperationException(name + ".Init: " + entry[1] + " isn't set once by " + entry[1] + " = num++");
             step.OpCode = OpCodes.Call;
-            step.Operand = CompatMethod(module, "Menus", "TwoPlayerEntries");
-            init.Body.GetILProcessor().InsertBefore(sets[0], Instruction.Create(OpCodes.Call, CompatMethod(module, "Menus", "TwoPlayerEntry")));
+            step.Operand = CompatMethod(module, "Menus", entry[2] + "Entries");
+            init.Body.GetILProcessor().InsertBefore(sets[0], Instruction.Create(OpCodes.Call, CompatMethod(module, "Menus", entry[2] + "Entry")));
             count++;
         }
 

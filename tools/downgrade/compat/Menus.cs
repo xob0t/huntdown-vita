@@ -1,7 +1,8 @@
 using System.Linq;
 using UnityEngine;
 
-// The game's menus on the PS Vita, without what a PS Vita doesn't have: a second player and a screen resolution.
+// The game's menus on the PS Vita, without what a PS Vita doesn't have: a second player, a screen resolution and a
+// desktop to quit to.
 // The rewriter (rewriter/Patches.cs, PatchMenus) calls these:
 // - Player two. GamePad.GetPlayerHasController and SearchForPlayerController say no for the second player
 //   (PlayerTwo: false), so no pad is taken for player two and no second pad's buttons join, pause or steer the
@@ -10,6 +11,9 @@ using UnityEngine;
 //   menus (PauseMenu.Init and MapPauseMenu.Init) JOIN PLAYER 2: its index (TwoPlayerEntry) is -1, the game's own
 //   "not in this menu", and the entries after it move up (TwoPlayerEntries: 0). Without 2 PLAYERS the main menu's
 //   first entry is the game's own START GAME instead of 1 PLAYER.
+// - Quitting. The main menu's EXIT GAME (StartMenu.Init) and the pause menu's quit menu's EXIT TO DESKTOP
+//   (AbandonGameMenu.Init) go the same way (QuitEntry, QuitEntries): a PS Vita game is closed from the system
+//   (the PS button), not from its own menus.
 // - The resolution. Options > Video's first entry, RESOLUTION, opens the game's resolution and full-screen menu;
 //   on the PS Vita the screen is always 960x544. VideoMenu.Init leaves it out of its entries (VideoChoices), and
 //   since the menu's code names its entries by fixed index (0 resolution, 1 CRT filter, 2 vsync, 3 frame rate,
@@ -32,7 +36,7 @@ namespace HuntCompat
                 if (trimmed == null)
                 {
                     trimmed = HuntFlags.On(ProbeFiles.Args, "-hunt-menus", "vita");
-                    if (trimmed.Value) Debug.Log("HUNT_MENUS no player two and no resolution menu");
+                    if (trimmed.Value) Debug.Log("HUNT_MENUS no player two, no resolution menu and no quit");
                 }
                 return trimmed.Value;
             }
@@ -46,6 +50,10 @@ namespace HuntCompat
         public static int TwoPlayerEntries() { return Trimmed ? 0 : 1; }
 
         public static int TwoPlayerEntry(int index) { return Trimmed ? -1 : index; }
+
+        public static int QuitEntries() { return Trimmed ? 0 : 1; }
+
+        public static int QuitEntry(int index) { return Trimmed ? -1 : index; }
 
         const int Resolution = 0;
 
