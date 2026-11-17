@@ -1,23 +1,24 @@
 # The editor-free builder
 
-`tools/builder` makes the PS Vita build from the translated Unity project (`work/hunt-<version>-vita`) without running the Unity editor. It started as a copy of The Drifter's port's builder. It is not part of `build.py` yet: the VPK still comes from the editor's build.
+`tools/builder` makes the PS Vita build from the translated Unity project (`work/hunt-<version>-vita`) without running the Unity editor. It started as a copy of The Drifter's port's builder. `build.py` and `pipeline.py build --platform vita` build with it; `--unity` builds with the editor instead.
 
 ```
-uv run tools/builder/make.py --out builds/hunt-2018.2.19f1-vita-builder          # the whole build folder (--vpk: and its VPK)
-uv run tools/downgrade/vita.py sync --build builds/hunt-2018.2.19f1-vita-builder # onto the console
+uv run tools/downgrade/pipeline.py build                       # make.py into builds/hunt-2018.2.19f1-vita
+uv run tools/builder/make.py --out <folder>                    # the whole build folder elsewhere (--vpk: and its VPK)
+uv run tools/downgrade/vita.py sync                            # onto the console
 ```
 
 `make.py` lays out the folder (`package.py`), writes the data files and the AssetBundles (`build.py`), builds the code module with UnityLinker and IL2CPP (`il2cpp.py`), and adds the pipeline's native plugin and boot.config. The data files alone, against the reference:
 
 ```
-uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --compare
-uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --only level0,resources.assets --compare
-uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --only StreamingAssets --compare   # the bundles
-uv run tools/builder/build.py --out builds/hunt-2018.2.19f1-vita-builder --only levels/1-1 --compare        # one bundle
-uv run tools/builder/il2cpp.py --out builds/hunt-2018.2.19f1-vita-builder --compare                         # the code
+uv run tools/builder/build.py --compare
+uv run tools/builder/build.py --only level0,resources.assets --compare
+uv run tools/builder/build.py --only StreamingAssets --compare   # the bundles
+uv run tools/builder/build.py --only levels/1-1 --compare        # one bundle
+uv run tools/builder/il2cpp.py --compare                         # the code
 ```
 
-`--compare` checks each file it writes, byte for byte, against the reference: a copy of the editor's build in `builds/hunt-2018.2.19f1-vita-unity` (copy `builds/hunt-2018.2.19f1-vita` there after an editor build). The builder still needs the editor's data folder (the PS Vita player, IL2CPP, the shader compiler) and gcc (`lz4unity.py`), but not the editor itself.
+`--compare` checks each file it writes, byte for byte, against the reference: the editor's build in `builds/hunt-2018.2.19f1-vita-unity` (`pipeline.py build --unity`). The builder reads Unity's files (the PS Vita player, IL2CPP, the engine and class libraries, CGIncludes), which `setup.py --vita` extracts from Unity's installers into `tools/external/unity-2018.2.19f1`, and the PS Vita SDK, but not the editor.
 
 The `check_*.py` scripts compare one kind of object with the reference in detail (`check_managers.py`, `check_typehash.py`, `check_imported.py`, ...). For a file that differs, `artifacts/classdiff.py <file>` counts the differing objects by class and `artifacts/objone.py <file> <path ID>...` shows an object's fields side by side; `artifacts/bundlediff.py <bundle> [path ID...]` does the same for a bundle's serialized file.
 

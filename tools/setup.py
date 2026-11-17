@@ -2,21 +2,31 @@
 
     uv run tools/setup.py                        # the editor, AssetRipper, .NET 8 SDK, Mono.Cecil, Python packages
     uv run tools/setup.py --il2cpp               # also the editor's Windows IL2CPP module
-    uv run tools/setup.py --vita                 # also the PS Vita module, the PS Vita SDK and its tools
+    uv run tools/setup.py --vita                 # the PS Vita build: Unity's files and the PS Vita SDK, no editor
     uv run tools/setup.py --vita --vita-sdk <your SDK archive or folder>
-    uv run tools/setup.py doctor [--target all|vita|windows|il2cpp] [--license]
+    uv run tools/setup.py --vita --unity         # the editor with its PS Vita module, for pipeline.py build --unity
+    uv run tools/setup.py doctor [--target all|vita|windows|il2cpp] [--unity] [--license]
     uv run tools/setup.py download editor il2cpp vita assetripper dotnet cecil --to <folder>
 
 The Unity installers come from Unity's CDN, the PS Vita module from its archive.org copy (Unity no
 longer serves it). Every download is checked against a pinned hash (SHA-256; SHA-512 for the .NET SDK,
 from Microsoft's release metadata; SHA-1 for the SDK's files, the only one archive.org lists), and the
-Unity installers must carry Unity Technologies' Authenticode signature before they run. Installers
-that need administrator rights ask for them (UAC).
+Unity installers must carry Unity Technologies' Authenticode signature before they run or anything is
+extracted from them; Microsoft's Visual C++ Redistributable, which Microsoft updates in place, must carry
+Microsoft's. Installers that need administrator rights ask for them (UAC).
 
-With --vita and no PS Vita SDK on the machine, setup downloads SDK 3.570 from archive.org, extracts it
-to C:\\vitasdk and patches it to 3.570.071; --vita-sdk takes your own copy instead, an archive (.zip,
-.7z, ...) or a folder. Either way setup checks the SDK's tools and version and sets SCE_PSP2_SDK_DIR
-for your user. The editor's PS Vita build also runs the SDK's Target Manager Server and Publishing
+With --vita setup installs no Unity: it downloads the editor's and the PS Vita module's installers and
+extracts what the pipeline and the PS Vita build (tools/builder) read, about 1.2 GB (CGIncludes, the
+engine and class libraries, IL2CPP, the built-in resources, the PS Vita player), into
+tools/external/unity-<version>, with 7-Zip (an installed one, or 7-Zip's own package from GitHub). It
+also installs the current Visual C++ runtime when Windows has an older one (the builder's texture
+encoder crashes in the 2015 one). With no PS Vita SDK on the machine, setup downloads SDK 3.570 from
+archive.org, extracts it to C:\\vitasdk and patches it to 3.570.071; --vita-sdk takes your own copy
+instead, an archive (.zip, .7z, ...) or a folder. Either way setup checks the SDK's tools and version and
+sets SCE_PSP2_SDK_DIR for your user.
+
+The editor (the Windows players, and --vita --unity for the editor's PS Vita build) is installed from
+Unity's installers. The editor's PS Vita build also runs the SDK's Target Manager Server and Publishing
 Tools, which setup installs from the SDK's installers (Publishing Tools need .NET Framework 3.5, which
 setup turns on) and points SCE_ROOT_DIR at. Setup removes the editor's license checks with unigate
 (--no-unigate keeps them), then starts the editor once in batch mode to check that it runs. --dry-run
@@ -53,6 +63,7 @@ from common import (
     finish_deleting,
     mono_cecil,
     replace_path,
+    unity_files,
 )
 from rich.text import Text
 
@@ -253,6 +264,104 @@ class Setup:
             winreg.SetValueEx(key, size, 0, winreg.REG_DWORD, CACHE_SERVER_GB)
         self.say('cache server', f"turned on the editor's local cache server ({CACHE_SERVER_GB} GB)")
 
+    def unity_files(self):
+        """What the pipeline and the PS Vita build read from Unity's editor and PS Vita module installers,
+        extracted with 7-Zip into tools/external/unity-<version>: nothing is installed or run."""
+        check = doctor.check_editor_data(TARGET, vita=True)
+        target = unity_files(TARGET)
+        if check.ok and target.exists():
+            self.say('unity-files', f'already in place ({check.detail})')
+            return
+        if self.args.dry_run:
+            self.say(
+                'unity-files',
+                f'would download the Unity {TARGET} editor and PS Vita module installers and extract their files '
+                f'into {target}',
+            )
+            return
+        free = doctor.free_gb(EXTERNAL)
+        if free < doctor.UNITY_FILES_GB:
+            sys.exit(
+                f"Unity's files: {free:.1f} GB free on {EXTERNAL.anchor}; they need about {doctor.UNITY_FILES_GB} GB"
+            )
+        seven = self.seven_zip_nsis()
+        partial = target.with_name(target.name + '.part')
+        if partial.exists():
+            shutil.rmtree(partial)
+        for module in ('editor', 'vita'):
+            url, sha256 = doctor.INSTALLERS[module]
+            installer = DOWNLOADS / url.rsplit('/', 1)[1]
+            download(url, installer, sha256)
+            verify_unity_signature(installer)
+            out = partial if module == 'editor' else partial / 'vita'
+            with progress.step(f'Extracting from {installer.name}'):
+                # 7-Zip exits with 1 for a warning: it reads the installer's script but not its commands.
+                code = subprocess.run(
+                    [seven, 'x', '-y', '-bso0', '-bsp0', f'-o{out}', str(installer), *doctor.UNITY_FILES[module]],
+                    check=False,
+                ).returncode
+            if code not in (0, 1):
+                sys.exit(f'7-Zip exited with code {code} extracting {installer.name}')
+            if not self.args.keep_downloads:
+                installer.unlink()
+        player = partial / 'Editor' / 'Data' / 'PlaybackEngines' / 'PSP2Player'
+        player.parent.mkdir(parents=True, exist_ok=True)
+        replace_path(partial / 'vita' / doctor.UNITY_FILES_VITA_FOLDER, player)
+        shutil.rmtree(partial / 'vita')
+        if target.exists():
+            shutil.rmtree(target)
+        replace_path(partial, target)
+        check = doctor.check_editor_data(TARGET, vita=True)
+        if not check.ok:
+            sys.exit(f"Unity's files: {check.detail}")
+        self.say('unity-files', f'extracted into {target}')
+
+    def seven_zip_nsis(self):
+        """A 7-Zip that reads NSIS installers: an installed one, or its package unpacked with 7zr into
+        tools/external/7-zip."""
+        installed = seven_zip()
+        if installed and Path(installed).stem.lower() == '7z':  # 7za has no NSIS reader
+            return installed
+        local = EXTERNAL / '7-zip' / '7z.exe'
+        if not local.exists():
+            url, sha256 = doctor.SEVEN_ZIP['7zr']
+            seven_zr = download(url, DOWNLOADS / '7zr.exe', sha256)
+            url, sha256 = doctor.SEVEN_ZIP['package']
+            package = download(url, DOWNLOADS / url.rsplit('/', 1)[1], sha256)
+            self.say('unity-files', f'unpacking 7-Zip into {local.parent}')
+            subprocess.run([str(seven_zr), 'x', '-y', '-bso0', '-bsp0', f'-o{local.parent}', str(package)], check=True)
+            for path in (seven_zr, package):
+                path.unlink()
+        return str(local)
+
+    def vc_runtime(self):
+        """Microsoft's current Visual C++ Redistributable, when System32's msvcp140.dll is older than the
+        builder's native packages need."""
+        check = doctor.check_vc_runtime()
+        if check.ok:
+            self.say('vc-runtime', f'Visual C++ runtime {check.detail}')
+            return
+        if self.args.dry_run:
+            self.say('vc-runtime', f'{check.detail}: would install {doctor.VC_REDIST_URL}')
+            return
+        installer = DOWNLOADS / 'vc_redist.x64.exe'
+        download(doctor.VC_REDIST_URL, installer, None)
+        status, subject = authenticode(installer)
+        if not doctor.signer_is_microsoft(status, subject):
+            sys.exit(
+                f'{installer.name}: no valid Authenticode signature of Microsoft (status {status}, '
+                f'signer {subject or "none"}). Not running it.'
+            )
+        print(f'  signature: {status}, {subject}')
+        self.say('vc-runtime', f'{check.detail}: installing the current Visual C++ Redistributable')
+        with progress.step('Installing the Visual C++ Redistributable'):
+            code = run_elevated(installer, '/install /quiet /norestart')
+        installer.unlink(missing_ok=True)
+        # 3010: installed, a restart pending; 1638: a newer version is already installed.
+        if code not in (0, 3010, 1638) or not doctor.check_vc_runtime().ok:
+            sys.exit(f'{installer.name} exited with code {code}; {doctor.check_vc_runtime().detail}')
+        self.say('vc-runtime', f'Visual C++ runtime {doctor.check_vc_runtime().detail}')
+
     def license(self, platform):
         """Start the editor once in batch mode; a pass is remembered until the editor changes."""
         unity = EDITORS / TARGET / doctor.EDITOR_FILES['editor']
@@ -288,6 +397,8 @@ class Setup:
         self.validate_sdk(sdk)
         # An SDK found on the machine is offered; one passed with --vita-sdk or downloaded is what the user asked for.
         self.set_env('vita-sdk', 'SCE_PSP2_SDK_DIR', sdk, ask=found is not None)
+        if not self.args.unity:  # the builder uses the SDK alone
+            return
         root = doctor.sce_root() or self.install_target_manager(sdk)
         if root is not None:
             self.set_env('vita-sdk', 'SCE_ROOT_DIR', root, ask=found is not None)
@@ -655,8 +766,14 @@ def main():
     parser.add_argument(
         '--vita',
         action='store_true',
-        help='the PS Vita module, the SDK (downloaded if the machine has none), Target Manager Server and '
-        'Publishing Tools',
+        help="the PS Vita build: Unity's files from its installers (no editor) and the SDK (downloaded if the "
+        'machine has none)',
+    )
+    parser.add_argument(
+        '--unity',
+        action='store_true',
+        help="with --vita: what the editor's PS Vita build (pipeline.py build --unity) needs instead: the editor and "
+        'its PS Vita module, Target Manager Server, Publishing Tools and .NET Framework 3.5, and the license check',
     )
     parser.add_argument(
         '--vita-sdk', metavar='PATH', help='your own PS Vita SDK: an archive or a folder (implies --vita)'
@@ -692,11 +809,18 @@ def main():
     if not args.dry_run:  # what an interrupted extraction or delete left, so nothing half there is trusted
         finish_deleting(EXTERNAL, WORK)
     setup.python()
-    setup.unity('editor')
+    # The PS Vita build reads Unity's files from its installers; the editor is installed only for the builds
+    # that run it (--unity, and the Windows players).
+    editor = not args.vita or args.unity or args.il2cpp
+    if editor:
+        setup.unity('editor')
     if args.il2cpp:
         setup.unity('il2cpp')
-    if args.vita:
+    if args.vita and args.unity:
         setup.unity('vita')
+    if args.vita:
+        setup.unity_files()
+        setup.vc_runtime()
     setup.assetripper()
     setup.dotnet()
     setup.cecil()
@@ -705,20 +829,21 @@ def main():
         setup.vita_sdk()
     if args.vita_host:
         setup.vita_host()
-    setup.unigate()
-    setup.cache_server()
-    setup.license('vita' if args.vita else 'windows')
+    if editor:
+        setup.unigate()
+        setup.cache_server()
+        setup.license('vita' if args.vita and args.unity else 'windows')
     print()
     if args.dry_run:
         print('Dry run: nothing was changed.')
         return
     if DOWNLOADS.exists() and not any(DOWNLOADS.iterdir()):
         DOWNLOADS.rmdir()
-    code = doctor.main([f'--target={t}' for t in targets], setup.license_check)
+    code = doctor.main([f'--target={t}' for t in targets] + (['--unity'] if args.unity else []), setup.license_check)
     for note in setup.notes:
         print('To do: ' + note)
     if code == 0 and not setup.notes and not args.then_build:
-        flags = ' '.join(f'--{t}' for t in targets)
+        flags = ' '.join([*(f'--{t}' for t in targets), *(['--unity'] if args.unity else [])])
         print(f'Next: uv run build.py {flags}')
     sys.exit(code or (1 if args.then_build and setup.notes else 0))  # build.py stops for the to-dos
 

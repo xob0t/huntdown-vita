@@ -2,15 +2,19 @@
 pipeline's stages in order.
 
     uv run build.py                      # the VPK: builds/hunt-2018.2.19f1-vita.vpk
+    uv run build.py --unity              # the VPK built by the Unity editor: builds/hunt-2018.2.19f1-vita-unity.vpk
     uv run build.py --windows            # a Windows (Mono) player: builds/hunt-2018.2.19f1/Huntdown.exe
     uv run build.py --vita --il2cpp      # the VPK and a Windows IL2CPP player
     uv run build.py --dry-run            # list the stages, run nothing
 
 Runs tools/setup.py for the targets (it installs what is missing and skips what is there), then
 tools/downgrade/pipeline.py: rip (skipped while the export matches the game, AssetRipper and its
-settings), project, build and, for the PS Vita, package. project and the editor's import only redo
-what changed, so a rerun is a rebuild. The stages run under the vita-build or pc-build lock
-(tools/downgrade/lock.py), waiting for another job's pipeline to finish first. docs/build.md describes
+settings), project, build and, for the PS Vita, package. The PS Vita player is built without the Unity
+editor (tools/builder), from Unity's files that setup extracts from its installers: no editor install,
+no license. --unity builds it with the editor instead, as the Windows players are. A rerun skips the
+rip while the export is current; the builder writes the data again and reuses an unchanged code module.
+The stages run under the vita-build or pc-build lock (tools/downgrade/lock.py), waiting for another
+job's pipeline to finish first. docs/build.md describes
 the requirements, the times and the other options.
 """
 
@@ -64,8 +68,10 @@ def plan(args):
         steps.append(('project', ['project', '--platform', 'vita', *game], f'work/hunt-{TARGET}-vita'))
     if args.windows or args.il2cpp:
         steps.append(('project', ['project', '--platform', 'windows', *game], f'work/hunt-{TARGET}'))
+    editor = ['--unity'] if args.unity else []
+    vita = f'builds/hunt-{TARGET}-vita' + ('-unity' if args.unity else '')
     if args.vita:
-        steps.append(('build', ['build', '--platform', 'vita', *game], f'builds/hunt-{TARGET}-vita'))
+        steps.append(('build', ['build', '--platform', 'vita', *editor, *game], vita))
     if args.windows:
         steps.append(('build', ['build', '--platform', 'windows', *game], f'builds/hunt-{TARGET}/Huntdown.exe'))
     if args.il2cpp:
@@ -77,7 +83,7 @@ def plan(args):
             )
         )
     if args.vita:
-        steps.append(('package', ['package', *game], f'builds/hunt-{TARGET}-vita.vpk'))
+        steps.append(('package', ['package', *editor, *game], f'{vita}.vpk'))
     first = STAGES.index(args.start)
     return [step for step in steps if STAGES.index(step[0]) >= first]
 
@@ -171,6 +177,12 @@ def main():
     parser.add_argument('--il2cpp', action='store_true', help='a Windows player with IL2CPP (as the Vita runs code)')
     parser.add_argument('--game', metavar='FOLDER', help="Huntdown, if not in Steam's or GOG's default folder")
     parser.add_argument('--vita-sdk', metavar='PATH', help='your own PS Vita SDK, an archive or a folder')
+    parser.add_argument(
+        '--unity',
+        action='store_true',
+        help='build the VPK with the Unity editor instead of the builder: installs the editor, needs a Unity '
+        'license (setup patches it with unigate)',
+    )
     parser.add_argument('--skip-setup', action='store_true', help='go straight to the pipeline')
     parser.add_argument(
         '--no-unigate', action='store_true', help="keep the editor's license checks (your editor has a license)"
@@ -203,6 +215,7 @@ def main():
     setup += ['--game', args.game] if args.game else []
     setup += ['--vita-sdk', args.vita_sdk] if args.vita_sdk else []
     setup += ['--no-unigate'] if args.no_unigate else []
+    setup += ['--unity'] if args.unity and args.vita else []
     name = 'vita-build' if args.vita else 'pc-build'
     if args.dry_run:
         if not args.skip_setup:

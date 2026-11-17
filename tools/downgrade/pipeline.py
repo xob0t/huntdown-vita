@@ -13,13 +13,17 @@ Stages, each runnable alone:
            (needs a Windows player): what Mono 2018 rejects, in seconds.
   project  Assemble work/hunt-<version>[-vita]: the export with the rewritten assemblies, decompiled
            shaders over AssetRipper's dummies, the asset rules (asset_rules.py) and the build script.
-  build    Import the project and build the player with the Unity editor in batch mode, into
-           builds/hunt-<version>[-vita].
-  package  PS Vita: turn the build into builds/hunt-<version>-vita.vpk, with the LiveArea art
+  build    Build the player into builds/hunt-<version>[-vita]. The PS Vita player is built without
+           running Unity (tools/builder: no editor, no license, no import); --unity, and every Windows
+           player, imports the project and builds it with the Unity editor in batch mode (the editor's
+           PS Vita player into builds/hunt-<version>-vita-unity).
+  package  PS Vita: turn the build into builds/hunt-<version>-vita[-unity].vpk, with the LiveArea art
            (livearea.py).
-  quickcode  PS Vita, after a full build: rewrite the assemblies and rebuild only the IL2CPP module and
-           metadata in builds/hunt-<version>-vita, replaying the build's linker and IL2CPP steps
-           (minutes, not the editor's half hour). For code changes; then vita.py sync.
+  quickcode  PS Vita, after a full editor build (build --unity): rewrite the assemblies and rebuild only the
+           IL2CPP module and metadata in builds/hunt-<version>-vita-unity, replaying the build's linker
+           and IL2CPP steps (minutes, not the editor's half hour). For code changes; then vita.py sync
+           --build builds/hunt-<version>-vita-unity. For the builder's build, project then
+           tools/builder/il2cpp.py rebuilds just the code module.
 
 HUNT_* environment variables switch parts of the stages on and off: common.BUILD_SWITCHES lists them with
 their values (docs/build.md).
@@ -1185,7 +1189,7 @@ def quick_code(version: str, game: Path, force: bool = False):
     it stops when the serialized types or the startup methods differ from the last full build's, and
     warns when the asset rules or build script changed since (quickcode_check). Then: vita.py sync."""
     project = project_folder(version, 'vita')
-    output = build_folder('vita', version=version)
+    output = build_folder('vita', version=version, unity=True)
     log_path = ARTIFACTS / f'build-{version}-vita.log'
     if not CODE_STAGE.exists() or not log_path.exists() or not (output / 'Media').exists():
         sys.exit('No saved PS Vita build to update: run pipeline.py build --platform vita once')
@@ -1641,6 +1645,13 @@ def main():
     parser.add_argument(
         '--force', action='store_true', help='quickcode: go on when the serialized types changed (see quick_code)'
     )
+    parser.add_argument(
+        '--unity',
+        action='store_true',
+        help='build, package: the PS Vita player built by the Unity editor, into builds/hunt-<version>-vita-unity. '
+        'Without it the PS Vita player is built without running Unity (tools/builder). Windows players always use '
+        'the editor',
+    )
     args = parser.parse_args()
     ignored = [
         option
@@ -1648,6 +1659,7 @@ def main():
             ('--scenes', args.scenes, ('build',)),
             ('--development', args.development, ('build',)),
             ('--force', args.force, ('quickcode',)),
+            ('--unity', args.unity, ('build', 'package')),
             ('--backend il2cpp', args.backend == 'il2cpp', ('build',)),
         )
         if given and args.stage not in stages
@@ -1677,8 +1689,17 @@ def main():
     project = project_folder(args.version, args.platform)
     if args.stage == 'project':
         assemble(rip_dir, project, args.version, args.game, args.platform)
-    if args.stage == 'build':
-        output = build_folder(args.platform, args.backend, bool(args.scenes), args.version)
+    # The builder makes the PS Vita player of the target version; anything else needs the editor.
+    unity = args.unity or args.platform != 'vita' or args.version != TARGET
+    if args.stage == 'build' and not unity and (args.scenes or args.development):
+        parser.error('--scenes and --development are for the editor build: add --unity')
+    if args.stage == 'build' and not unity:
+        sys.path.insert(0, str(HERE.parent / 'builder'))
+        import make
+
+        make.make(build_folder('vita', version=args.version))
+    elif args.stage == 'build':
+        output = build_folder(args.platform, args.backend, bool(args.scenes), args.version, unity=args.unity)
         player = output if args.platform == 'vita' else output / 'Huntdown.exe'
         scenes = [name.strip() for name in args.scenes.split(',') if name.strip()] if args.scenes else None
         build(project, args.version, player, args.platform, args.backend, args.development, scenes)
@@ -1687,7 +1708,7 @@ def main():
             # by an older build would let it sign in to Steam if the real wrapper came back.
             (output / 'steam_appid.txt').unlink(missing_ok=True)
     if args.stage == 'package':
-        package_vita(build_folder('vita', version=args.version))
+        package_vita(build_folder('vita', version=args.version, unity=args.unity))
     if args.stage == 'quickcode':
         quick_code(args.version, args.game, args.force)
 

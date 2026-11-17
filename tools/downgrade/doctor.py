@@ -72,9 +72,42 @@ EDITOR_FILES = {
     'vita': 'Editor/Data/PlaybackEngines/PSP2Player/PSP2Player_Il2cpp.self',
 }
 MODULE_NAMES = {'il2cpp': 'Windows IL2CPP module', 'vita': 'PS Vita module'}
-# What the pipeline reads from the editor's Data folder (common.editor_data: an installed editor's, or
-# the files The Drifter's setup extracts into tools/external/unity-<version>), under Editor/Data. The
-# PS Vita module's player and engine assemblies only for the vita target.
+# What setup.py --vita extracts from the editor's and the PS Vita module's installers (with 7-Zip, installing
+# nothing) into tools/external/unity-<version>: what the pipeline and the editor-free build (tools/builder) read.
+UNITY_FILES = {
+    'editor': [
+        r'Editor\Data\CGIncludes',
+        r'Editor\Data\Managed',
+        r'Editor\Data\MonoBleedingEdge\lib\mono\unityaot',
+        r'Editor\Data\MonoBleedingEdge\lib\mono\unityjit',
+        r'Editor\Data\MonoBleedingEdge\etc',
+        r'Editor\Data\il2cpp',
+        r'Editor\Data\Tools\MapFileParser',
+        r'Editor\Data\Resources\unity_builtin_extra',
+        r'Editor\Data\UnityExtensions\Unity',
+    ],
+    'vita': ['$INSTDIR$_59_'],
+}
+UNITY_FILES_VITA_FOLDER = '$INSTDIR$_59_'  # the PS Vita module's PlaybackEngines/PSP2Player in its installer
+UNITY_FILES_GB = 3  # free space the extraction needs, the installers included
+# 7-Zip reads NSIS installers; where none is installed, setup.py unpacks its package with 7zr.
+SEVEN_ZIP = {
+    '7zr': (
+        'https://github.com/ip7z/7zip/releases/download/26.04/7zr.exe',
+        '256feca8e274e5da655e2a284fabafd9f554365eb164862089dacd4e8276d282',
+    ),
+    'package': (
+        'https://github.com/ip7z/7zip/releases/download/26.04/7z2604-x64.exe',
+        'd54bf805f9f3704d1e8db2fa3498ae7ef2df0312b40b558e7c71c734430a665d',
+    ),
+}
+# The builder's native packages (quicktex's encoders) are built with Visual Studio 2022 17.10 or later and
+# crash in an older msvcp140.dll, such as the 2015 runtime (14.0.23026) the Unity 2018 installer brings.
+VC_RUNTIME_MIN = (14, 40)
+VC_REDIST_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+# What the pipeline reads from the editor's Data folder (common.editor_data: the files setup.py --vita
+# extracts into tools/external/unity-<version>, or an installed editor's), under Editor/Data. The PS Vita
+# module's player and engine assemblies, and what the builder reads, only for the vita target.
 EDITOR_DATA_CHECKED = [
     'CGIncludes/UnityCG.cginc',
     'Managed/UnityEngine/UnityEngine.CoreModule.dll',
@@ -83,6 +116,10 @@ EDITOR_DATA_CHECKED = [
     'UnityExtensions/Unity/GUISystem/UnityEngine.UI.dll',
 ]
 EDITOR_DATA_CHECKED_VITA = [
+    'MonoBleedingEdge/lib/mono/unityjit/mscorlib.dll',
+    'il2cpp/build/il2cpp.exe',
+    'Tools/MapFileParser/MapFileParser.exe',
+    'Resources/unity_builtin_extra',
     'PlaybackEngines/PSP2Player/Managed',
     'PlaybackEngines/PSP2Player/PSP2Player_Il2cpp.self',
 ]
@@ -568,17 +605,59 @@ def check_editor(module='editor'):
 
 
 def check_editor_data(version, vita):
-    """The editor files the pipeline reads (common.editor_data)."""
+    """The editor files the pipeline and the builder read (common.editor_data): extracted from Unity's
+    installers by setup.py --vita, or an installed editor's."""
     data = editor_data(version)
+    fix = f'{SETUP} --vita (extracts them from the Unity {version} installers; installs nothing)' if vita else SETUP
     if not data.exists():
-        return Check("Unity's files", False, f'no {data} (comes with the editor)', SETUP)
+        return Check("Unity's files", False, f'no {data}', fix)
     gaps = missing(data, EDITOR_DATA_CHECKED + (EDITOR_DATA_CHECKED_VITA if vita else []))
+    return Check("Unity's files", not gaps, f'{data} lacks ' + ', '.join(gaps) if gaps else str(data), fix)
+
+
+def file_version(path: Path):
+    """(major, minor, build, revision) from a DLL's version resource, or None."""
+    import ctypes
+    from ctypes import wintypes
+
+    version = ctypes.WinDLL('version')
+    size = version.GetFileVersionInfoSizeW(str(path), None)
+    if not size:
+        return None
+    data = ctypes.create_string_buffer(size)
+    if not version.GetFileVersionInfoW(str(path), 0, size, data):
+        return None
+    info, length = ctypes.c_void_p(), wintypes.UINT()
+    if not version.VerQueryValueW(data, '\\', ctypes.byref(info), ctypes.byref(length)):
+        return None
+    fixed = ctypes.cast(info, ctypes.POINTER(wintypes.DWORD * 4)).contents  # signature, struct version, MS, LS
+    return fixed[2] >> 16, fixed[2] & 0xFFFF, fixed[3] >> 16, fixed[3] & 0xFFFF
+
+
+def vc_runtime():
+    """The version of the 64-bit Visual C++ runtime (System32's msvcp140.dll), or None."""
+    path = Path(os.environ.get('SYSTEMROOT', r'C:\Windows')) / 'System32' / 'msvcp140.dll'
+    return file_version(path) if path.exists() else None
+
+
+def check_vc_runtime():
+    found = vc_runtime()
+    shown = '.'.join(map(str, found)) if found else None
+    ok = bool(found) and found[:2] >= VC_RUNTIME_MIN
     return Check(
-        "Unity's files",
-        not gaps,
-        f'{data} lacks ' + ', '.join(gaps) if gaps else str(data),
-        f'{SETUP}{" --vita" if vita else ""}',
+        'Visual C++ runtime',
+        ok,
+        f'{shown} (msvcp140.dll)'
+        if ok
+        else f'{shown or "none"}; the builder needs {".".join(map(str, VC_RUNTIME_MIN))} or later',
+        f'{SETUP} --vita (installs the current Visual C++ Redistributable)',
     )
+
+
+def signer_is_microsoft(status, subject):
+    """Get-AuthenticodeSignature's Status and SignerCertificate.Subject of a Microsoft installer."""
+    microsoft = re.search(r'(^|,\s*)O=Microsoft Corporation\s*(,|$)', subject, re.IGNORECASE)
+    return status == 'Valid' and microsoft is not None
 
 
 def check_visual_cpp():
@@ -592,8 +671,9 @@ def check_visual_cpp():
     )
 
 
-def check_vita_sdk():
-    """The PS Vita SDK and the Target Manager tools, through the variables Unity reads."""
+def check_vita_sdk(unity=False):
+    """The PS Vita SDK and the Target Manager tools, through the variables Unity reads. Only the editor's
+    build (unity) needs Target Manager Server and Publishing Tools; the builder uses the SDK alone."""
     fix = f'{SETUP} --vita (downloads the SDK), or --vita-sdk <your SDK archive or folder>'
     checks = []
     sdk, stale = env('SCE_PSP2_SDK_DIR')
@@ -618,7 +698,9 @@ def check_vita_sdk():
                 f'{sdk} (version {shown})' + (' - set for new shells; this one does not see it' if stale else ''),
             )
         )
-    fix = f'{SETUP} --vita (installs Target Manager Server and Publishing Tools from the SDK)'
+    if not unity:
+        return checks
+    fix = f'{SETUP} --vita --unity (installs Target Manager Server and Publishing Tools from the SDK)'
     root, stale = env('SCE_ROOT_DIR')
     if not root:
         found = sce_root()
@@ -745,11 +827,12 @@ def remove_soon(folder, seconds=10):
     for _ in range(int(seconds / 0.5)):
         try:
             shutil.rmtree(folder)
-            return
         except FileNotFoundError:
             return
         except OSError:
             time.sleep(0.5)
+        else:
+            return
     shutil.rmtree(folder, ignore_errors=True)
 
 
@@ -783,10 +866,13 @@ def project_dir(version, platform):
     return WORK / (f'hunt-{version}' + ('-vita' if platform == 'vita' else ''))
 
 
-def checks_for(targets, game: Path, license_check=False):
-    """Every requirement of the targets, for the doctor's full checklist."""
+def checks_for(targets, game: Path, license_check=False, unity=False):
+    """Every requirement of the targets, for the doctor's full checklist. The PS Vita player is built
+    without the editor (tools/builder) unless unity (pipeline.py build --unity); the Windows players
+    always need it."""
     version = TARGET
     vita = 'vita' in targets
+    editor = unity or 'windows' in targets or 'il2cpp' in targets
     checks = [
         check_python(),
         check_csc(),
@@ -795,19 +881,21 @@ def checks_for(targets, game: Path, license_check=False):
         check_dotnet(),
         check_cecil(),
         check_uscsandbox(),
-        check_editor(),
     ]
+    if editor:
+        checks.append(check_editor())
     if 'il2cpp' in targets:
         checks += [check_editor('il2cpp'), check_visual_cpp()]
-    if vita:
+    if vita and unity:
         checks.append(check_editor('vita'))
     checks.append(check_editor_data(version, vita))
     if vita:
-        checks += [*check_vita_sdk(), check_vita_host()]
+        checks += [check_vc_runtime(), *check_vita_sdk(unity), check_vita_host()]
     checks.append(check_space(targets))
     # The license check starts the editor with the PS Vita target when the targets include it (that also
-    # checks the module loads), else the Windows one.
-    checks.append(license_status('vita' if vita else 'windows', version, license_check))
+    # checks the module loads), else the Windows one. The builder needs neither.
+    if editor:
+        checks.append(license_status('vita' if vita and unity else 'windows', version, license_check))
     return checks
 
 
@@ -823,10 +911,16 @@ def main(argv=None, license_check=None):
         'default); repeat it for two',
     )
     parser.add_argument('--license', action='store_true', help='start the editor once in batch mode (about a minute)')
+    parser.add_argument(
+        '--unity',
+        action='store_true',
+        help='the PS Vita player built by the editor (pipeline.py build --unity): also the editor, its PS Vita '
+        'module, Target Manager Server, Publishing Tools and the license',
+    )
     args = parser.parse_args(argv)
     chosen = args.target or ['all']
     targets = TARGETS if 'all' in chosen else tuple(t for t in TARGETS if t in chosen)
-    checks = checks_for(targets, default_game(), license_check=license_check or args.license)
+    checks = checks_for(targets, default_game(), license_check=license_check or args.license, unity=args.unity)
     lines, failed = summarize(checks)
     title = 'every target' if targets == TARGETS else f'the {" and ".join(targets)} target' + 's' * (len(targets) > 1)
     for line in [Text(f'Requirements for {title}:'), *lines]:
