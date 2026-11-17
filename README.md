@@ -6,14 +6,13 @@ There are no game files in this repository. You bring your own copy, and the pip
 
 ## Where it stands
 
-Work in progress, but playable. The VPK builds, and on the console the game runs from its opening cutscene through the menus into the levels, which draw as on PC and play with the pad; Start and Select pause. A level takes about 15 s to load. The first area has been played through on the console: it runs at 60 fps, and drops frames only now and then, when a lot is happening on screen. Debris, blood and weather use smaller pools than on PC to keep it there. In a test run through every level the game holds 60 fps outside loads and restarts after a death, though that run doesn't reach the busiest parts of the harder levels. [docs/status.md](docs/status.md) has the details and the open issues.
+Work in progress, but playable. The VPK builds, and on the console the game runs from its opening cutscene through the menus into the levels, which draw as on PC and play with the pad; Start and Select pause. A level takes about 15 s to load. The game plays at 60 fps most of the time, with minor dips in the heaviest fights, when a lot of explosions and enemies are on screen. Debris, blood and weather use smaller pools than on PC to keep it there, and effects, debris and weather are drawn as a few batched meshes instead of a sprite each. [docs/status.md](docs/status.md) has the details and the open issues.
 
 ## How it differs from the PC release
 
 - The game's AssetBundles (its levels, area art and sound) are rebuilt for the target by the editor, under the same names.
 - On the PS Vita, sound clips stay compressed in memory as HEVAG, the console's own format, instead of being decompressed when loaded, and the music streams.
 - The pad goes through Rewired's PS Vita controller: R dashes, L does what Left Shoulder 1 does on a PC pad.
-- The two logo videos at start are skipped: the PS Vita's Unity has no video player.
 - Steamworks is replaced with a stub, so no player signs in to Steam.
 
 ## Building
@@ -21,7 +20,7 @@ Work in progress, but playable. The VPK builds, and on the console the game runs
 You need Windows 10 or 11, Huntdown from Steam, about 20 GB of free disk space, and a console on HENkaku or Ensō with VitaShell. The setup is the same as Crow Country's port, and its [build guide](https://github.com/xob0t/crow-country-vita/blob/main/docs/build.md) covers what it installs: Unity 2018.2.19f1 with its PS Vita module, a patch to that editor's license check made with [unigate](https://github.com/xob0t/unigate), Sony's PS Vita SDK 3.570, AssetRipper, the .NET 8 SDK and Mono.Cecil.
 
 1. Install [uv](https://docs.astral.sh/uv/).
-2. Clone this repository, and in its folder run:
+2. Download [huntdown-vita.zip](https://github.com/xob0t/huntdown-vita/releases/latest/download/huntdown-vita.zip) and extract it (or clone this repository). In its folder, open a terminal and run:
 
    ```powershell
    uv run build.py                 # the PS Vita app: builds/hunt-2018.2.19f1-vita.vpk
