@@ -71,6 +71,60 @@ partial class DowngradeAssemblies
         return count + 2;
     }
 
+    // GamePad's reads of Rewired (GetButton, GetButtonDown, GetButtonUp, GetAxis by action name, GetAnyButton; for the
+    // game's player 0 or 1) and Rewired's frame (InputManager_Base.Update), where HuntCompat RewiredDirect says so
+    // (compat/RewiredDirect.cs; the PS Vita, once its pad is the first player's):
+    // - InputManager_Base.Update starts with if (RewiredDirect.SkipUpdate()) return; (SkipUpdate also reads the pad,
+    //   once a frame, where Rewired would have);
+    // - each GamePad read starts with if (RewiredDirect.Answers(player)) return RewiredDirect.<Read>(player, action);
+    //   and, for -hunt-rewired-direct check, its value goes through RewiredDirect.Check<Read>(value, player, action)
+    //   before each ret (Check returns it unchanged).
+    static readonly string[][] GamePadReads =
+    {
+        new[] { "GetButton", "Button", "CheckButton" }, new[] { "GetButtonDown", "ButtonDown", "CheckButtonDown" },
+        new[] { "GetButtonUp", "ButtonUp", "CheckButtonUp" }, new[] { "GetAxis", "Axis", "CheckAxis" },
+        new[] { "GetAnyButton", "AnyButton", "CheckAnyButton" },
+    };
+
+    static int AnswerGamePadDirect(ModuleDefinition module)
+    {
+        int count = 0;
+        TypeDefinition manager = module.GetType("Rewired.InputManager_Base");
+        if (manager != null)
+        {
+            ReturnAtStartIf(manager.Methods.Single(m => m.Name == "Update" && m.Parameters.Count == 0), OpCodes.Brtrue,
+                            Instruction.Create(OpCodes.Call, CompatMethod(module, "RewiredDirect", "SkipUpdate")));
+            count++;
+        }
+        Count("rewired InputManager_Base.Update", count);
+        TypeDefinition gamepad = module.GetType("GamePad");
+        Count("GamePad reads answered directly", gamepad == null ? 0 : GamePadReads.Length);
+        if (gamepad == null) return count;
+        MethodReference answers = CompatMethod(module, "RewiredDirect", "Answers");
+        foreach (string[] read in GamePadReads)
+        {
+            MethodDefinition method = gamepad.Methods.Single(m => m.Name == read[0] && m.Parameters.Count == (read[0] == "GetAnyButton" ? 1 : 2) &&
+                                                                  m.Parameters[0].ParameterType.FullName == "System.Int32");
+            bool named = method.Parameters.Count == 2;
+            MethodReference check = CompatMethod(module, "RewiredDirect", read[2]);
+            BeforeRets(method, () => named
+                ? new[] { Instruction.Create(OpCodes.Ldarg_1), Instruction.Create(OpCodes.Ldarg_2), Instruction.Create(OpCodes.Call, check) }
+                : new[] { Instruction.Create(OpCodes.Ldarg_1), Instruction.Create(OpCodes.Call, check) });
+            Instruction first = method.Body.Instructions[0];
+            var answer = new List<Instruction>
+            {
+                Instruction.Create(OpCodes.Ldarg_1), Instruction.Create(OpCodes.Call, answers), Instruction.Create(OpCodes.Brfalse, first),
+                Instruction.Create(OpCodes.Ldarg_1),
+            };
+            if (named) answer.Add(Instruction.Create(OpCodes.Ldarg_2));
+            answer.Add(Instruction.Create(OpCodes.Call, CompatMethod(module, "RewiredDirect", read[1])));
+            answer.Add(Instruction.Create(OpCodes.Ret));
+            Prepend(method, answer.ToArray());
+            count++;
+        }
+        return count;
+    }
+
     // Analytics.LoginWith and LoginWithXbox (coroutines the game starts at launch) return HuntCompat
     // Offline.Nothing instead: no request goes to the developer's stats server, Analytics.isOK stays false,
     // and every other report, which checks it, is skipped (compat/Offline.cs).

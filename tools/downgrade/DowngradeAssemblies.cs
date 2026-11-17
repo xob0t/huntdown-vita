@@ -119,6 +119,7 @@ partial class DowngradeAssemblies
         new Pass("patches", Scope.Game, PatchPoolSizes),
         new Pass("patches", Scope.Game, PatchGcSafePoints),
         new Pass("patches", Scope.All, SkipEmptyJoystickAxes),
+        new Pass("patches", Scope.All, AnswerGamePadDirect),
         new Pass("patches", Scope.All, ProfileFrameMethods, "HUNT_PROF"),
         new Pass("patches", Scope.Game, RouteResourceLoads),
     };
