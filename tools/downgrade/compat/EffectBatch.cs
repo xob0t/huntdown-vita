@@ -33,7 +33,7 @@ using UnityEngine;
 //   -hunt-effect-batch on|off|check   on: batched on any player; off: the game's renderers (the PS Vita's default is
 //                               on, other players' off); check: both, the batched ones tinted magenta and half
 //                               transparent over the game's, to see that they line up
-// With -hunt-heartbeat, a HUNT_EFFECT_BATCH line every 600 frames: the sprites and vertices drawn a frame, and Build's
+// With -hunt-heartbeat, a HUNT_EFFECT_BATCH line at each level's scans (what Purge dropped) and every 600 frames: the sprites and vertices drawn a frame, and Build's
 // time a frame in its three parts (gather: each sprite to its mesh; emit: the vertices; upload: the meshes).
 // Measured in level 4-1 with -hunt-cheats god,ammo,grenadelauncher (LevelJump.cs): about 200 of these sprites in
 // view, Build took 2.2 ms a frame where the engine took 4-5 ms for them as sprites; the seconds under 58 fps went
@@ -72,8 +72,10 @@ namespace HuntCompat
 
         class Bucket
         {
+            public Key key;
             public MeshRenderer renderer;
             public Mesh mesh;
+            public Material material;
             public readonly List<Item> items = new List<Item>();
             public readonly List<Matrix4x4> matrices = new List<Matrix4x4>();
             // The mesh's lists (Mesh.SetVertices and friends copy a list's count), at the frame's counts (Add and
@@ -136,6 +138,7 @@ namespace HuntCompat
         static int scanAt = -1, scanAgainAt = -1;
         static readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
         static readonly List<Bucket> bucketList = new List<Bucket>();
+        static int shapeIds;
         static readonly Bounds Everywhere = new Bounds(Vector3.zero, new Vector3(1e6f, 1e6f, 1e6f));
         static Camera view;
         static bool hooked;
@@ -374,6 +377,54 @@ namespace HuntCompat
             foreach (KeyValuePair<Object, Item> entry in items)
                 if (entry.Value.go == null) gone.Add(entry.Key);
             foreach (Object key in gone) items.Remove(key);
+            Purge();
+        }
+
+        // The meshes nothing drew into last frame (the last level's, mostly: its weather, its debris) go, with the
+        // materials only they used, and the shapes no registered sprite has: kept, they held on to their sprites'
+        // textures from level to level, and Build went through every mesh each frame. Each item finds its mesh
+        // again (segments), the ones still drawn by their keys.
+        static void Purge()
+        {
+            int kept = 0, meshesBefore = bucketList.Count, materialsBefore = materials.Count, shapesBefore = shapes.Count;
+            buckets.Clear();
+            var materialsKept = new HashSet<Material>();
+            for (int i = 0; i < bucketList.Count; i++)
+            {
+                Bucket bucket = bucketList[i];
+                if (bucket.drawn)
+                {
+                    bucketList[kept++] = bucket;
+                    buckets[bucket.key] = bucket;
+                    materialsKept.Add(bucket.material);
+                    continue;
+                }
+                Object.Destroy(bucket.renderer.gameObject);
+                Object.Destroy(bucket.mesh);
+            }
+            bucketList.RemoveRange(kept, bucketList.Count - kept);
+            segments++;
+
+            var materialKeys = new List<long>();
+            foreach (KeyValuePair<long, Material> entry in materials)
+                if (!materialsKept.Contains(entry.Value)) materialKeys.Add(entry.Key);
+            foreach (long key in materialKeys)
+            {
+                Object.Destroy(materials[key]);
+                materials.Remove(key);
+            }
+
+            var shapesKept = new HashSet<Shape>();
+            foreach (Item item in items.Values)
+                if (item.shape != null) shapesKept.Add(item.shape);
+            var sprites = new List<Object>();
+            foreach (KeyValuePair<Object, Shape> entry in shapes)
+                if (!shapesKept.Contains(entry.Value)) sprites.Add(entry.Key);
+            foreach (Object sprite in sprites) shapes.Remove(sprite);
+            if (logged)
+                Debug.Log("HUNT_EFFECT_BATCH dropped " + (meshesBefore - bucketList.Count) + " of " + meshesBefore + " meshes, " +
+                          (materialsBefore - materials.Count) + " of " + materialsBefore + " materials, " +
+                          (shapesBefore - shapes.Count) + " of " + shapesBefore + " shapes");
         }
 
         // Before the engine renders: the active sprites in view into the buckets' meshes.
@@ -621,7 +672,7 @@ namespace HuntCompat
             {
                 vertices = vertices, uv = sprite.uv, triangles = sprite.triangles, texture = texture, radius = radius,
                 textureKey = texture != null ? texture.GetInstanceID() : 0,
-                id = shapes.Count,
+                id = ++shapeIds,  // not shapes.Count: Purge removes shapes, and an id is in the meshes' signatures
             };
             return shape;
         }
@@ -638,7 +689,8 @@ namespace HuntCompat
             mesh.MarkDynamic();
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var renderer = go.AddComponent<MeshRenderer>();
-            renderer.sharedMaterial = MaterialFor(item.material, materialKey, shape);
+            Material material = MaterialFor(item.material, materialKey, shape);
+            renderer.sharedMaterial = material;
             renderer.sortingLayerID = item.layer;
             renderer.sortingOrder = item.order;
             renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -651,7 +703,7 @@ namespace HuntCompat
             block.SetVector("_Flip", Vector4.one);
             renderer.SetPropertyBlock(block);
             renderer.enabled = false;
-            bucket = new Bucket { renderer = renderer, mesh = mesh, order = item.order, textureKey = shape.textureKey };
+            bucket = new Bucket { key = key, renderer = renderer, mesh = mesh, material = material, order = item.order, textureKey = shape.textureKey };
             buckets[key] = bucket;
             bucketList.Add(bucket);
             return bucket;
