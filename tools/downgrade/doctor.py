@@ -146,14 +146,16 @@ DOTNET = EXTERNAL / 'dotnet'
 GAME_DIR = STEAM_GAME.name
 GAME_EXE = 'Huntdown.exe'
 GAME_DATA = 'Huntdown_Data'
-# The game's GOG product ID (GOG_GAME, in common, is the folder GOG installs it in by default). Not known yet:
-# the rules have only been written against the Steam release, so the GOG lookups find nothing.
-GOG_ID = ''
-# The game code the rules are written for, by the SHA-256 of Huntdown_Data/Managed/Assembly-CSharp.dll
-# (Unity 2019.4.13f1, Version.txt "Patched: 2025-09-30 14:15"). Steamworks is stubbed. Another release may
-# work, but the rules weren't checked on it.
+# The game's GOG product ID, from goggame-<id>.info in its folder (GOG_GAME, in common, is the folder GOG
+# installs it in by default).
+GOG_ID = '2094700167'
+# The game code the rules are written for, by the SHA-256 of Huntdown_Data/Managed/Assembly-CSharp.dll, all
+# Unity 2019.4.13f1. Steam's (Version.txt "Patched: 2025-09-30 14:15", the game's build 279) has Steamworks,
+# which is stubbed. GOG's 1.227 (the game's build 277) has no Steamworks and no analytics, and lacks a few of
+# the Steam release's later fixes (water footsteps). Another release may work, but the rules weren't checked on it.
 GAME_CODE = {
     '7b7ac53688cd800ac17af81f43b8ee6b4ad5fd6290dbfd421ac64e3640350251': 'Steam build 20193748',
+    '96522877e41a100c6fb05725c334a112a785388f5c41db9495bb3f38b8584aa0': 'GOG 1.227',
 }
 
 # Where setup.py extracts an SDK archive by default; the SDK is its sdk folder.
@@ -373,18 +375,23 @@ def steam_game():
     return next((c for c in game_candidates(steam_roots(), read_text) if (c / GAME_EXE).exists()), None)
 
 
-def gog_game():
-    """The game's GOG install, from the key GOG's installer writes, else GOG's default folder; or None."""
+def gog_values(name):
+    """A value of the key GOG's installer writes for the game (path, ver), from each registry view that has it."""
     import winreg
 
-    folders = []
-    keys = (rf'SOFTWARE\WOW6432Node\GOG.com\Games\{GOG_ID}', rf'SOFTWARE\GOG.com\Games\{GOG_ID}') if GOG_ID else ()
-    for path in keys:
+    values = []
+    for path in (rf'SOFTWARE\WOW6432Node\GOG.com\Games\{GOG_ID}', rf'SOFTWARE\GOG.com\Games\{GOG_ID}'):
         try:
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as handle:
-                folders.append(Path(winreg.QueryValueEx(handle, 'path')[0]))
+                values.append(winreg.QueryValueEx(handle, name)[0])
         except OSError:
             pass
+    return values
+
+
+def gog_game():
+    """The game's GOG install, from the key GOG's installer writes, else GOG's default folder; or None."""
+    folders = [Path(p) for p in gog_values('path')]
     return next((f for f in [*folders, GOG_GAME] if (f / GAME_EXE).exists()), None)
 
 
@@ -394,14 +401,17 @@ def find_game():
 
 
 def store_build(game: Path):
-    """The install's store build ('Steam build 18838972', from its library's appmanifest; 'GOG build ...',
-    from GOG's goggame-<id>.info in the game's folder), or None."""
-    for store, path, pattern in (
-        ('Steam', game.parent.parent / f'appmanifest_{STEAM_APP_ID}.acf', r'"buildid"\s+"(\d+)"'),
-        ('GOG', game / f'goggame-{GOG_ID}.info', r'"buildId":\s*"(\d+)"'),
-    ):
-        if match := re.search(pattern, read_text(path) or ''):
-            return f'{store} build {match[1]}'
+    """The install's store build ('Steam build 18838972', from its library's appmanifest; 'GOG 1.227', the
+    version GOG's installer wrote for the folder with goggame-<id>.info), or None."""
+    manifest = read_text(game.parent.parent / f'appmanifest_{STEAM_APP_ID}.acf') or ''
+    if match := re.search(r'"buildid"\s+"(\d+)"', manifest):
+        return f'Steam build {match[1]}'
+    if (game / f'goggame-{GOG_ID}.info').exists():
+        folders = [os.path.normcase(p) for p in gog_values('path')]
+        versions = gog_values('ver')
+        if os.path.normcase(str(game)) in folders and versions:
+            return f'GOG {versions[0]}'
+        return 'GOG'
     return None
 
 

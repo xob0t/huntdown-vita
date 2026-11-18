@@ -6,7 +6,7 @@ There are no game files in this repository. You bring your own copy, and the pip
 
 ## How it plays
 
-Very well. Huntdown holds 60 fps on the PS Vita nearly all the time, and only the biggest fights, with lots of explosions on screen, dip a little. A level takes about 15 seconds to load. If you have a Vita and the game on Steam, play it.
+Very well. Huntdown holds 60 fps on the PS Vita nearly all the time, and only the biggest fights, with lots of explosions on screen, dip a little. A level takes about 15 seconds to load. If you have a Vita and the game on Steam or GOG, play it.
 
 ## What's different from PC
 
@@ -18,7 +18,7 @@ Very well. Huntdown holds 60 fps on the PS Vita nearly all the time, and only th
 
 ## Building
 
-You need Windows 10 or 11 on x64, Huntdown from Steam, about 10 GB of free disk space, and a console on HENkaku or Ensō with VitaShell.
+You need Windows 10 or 11 on x64, Huntdown from Steam or GOG, about 10 GB of free disk space, and a console on HENkaku or Ensō with VitaShell.
 
 1. Install [uv](https://docs.astral.sh/uv/): open PowerShell from the Start menu and run
 
@@ -38,7 +38,7 @@ You need Windows 10 or 11 on x64, Huntdown from Steam, about 10 GB of free disk 
 
 A first build takes about 25 minutes and leaves about 6.5 GB in the folder. It doesn't install Unity or need a Unity license: it downloads Unity 2018.2.19f1's installers and extracts the files the build reads, and Sony's PS Vita SDK 3.570 from archive.org, with AssetRipper, the .NET 8 SDK and Mono.Cecil. A rerun picks up where the last one stopped.
 
-- `--game <folder>` reads the game from that folder, if it isn't in your Steam library.
+- `--game <folder>` reads the game from that folder, if it isn't in your Steam library or GOG's default folder.
 - `--vita-sdk <archive or folder>` uses your own copy of the SDK.
 - `--unity` builds the VPK with the Unity editor instead. It installs the editor with its PS Vita module and patches its license check with [unigate](https://github.com/xob0t/unigate).
 - `--windows` builds a Windows test player with the editor: `builds/hunt-2018.2.19f1/Huntdown.exe`.

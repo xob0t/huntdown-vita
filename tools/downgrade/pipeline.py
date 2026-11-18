@@ -440,6 +440,8 @@ ROOTS = [
     '-SonyNP',
     '-SonyPS4SaveData',
 ]
+# Roots one of the game's releases lacks: GOG's has no Steamworks.NET (Assembly-CSharp-firstpass).
+OPTIONAL_ROOTS = {'Assembly-CSharp-firstpass'}
 
 
 def rewrite_assemblies(plugins: Path, out: Path, version: str, platform: str, roots=ROOTS):
@@ -450,6 +452,8 @@ def rewrite_assemblies(plugins: Path, out: Path, version: str, platform: str, ro
         shutil.rmtree(out)
     log_path = ARTIFACTS / f'rewrite-{version}-{platform}.log'
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    # The GOG release has no Steamworks.NET, so no Assembly-CSharp-firstpass to rewrite or stub.
+    roots = [r for r in roots if r not in OPTIONAL_ROOTS or (plugins / f'{r}.dll').exists()]
     command = [rewriter, plugins, out, compat, ','.join(roots), *references]
     switches = build_switches(platform, ('code',))
     log('Code switches: ' + describe_switches(switches))
@@ -458,7 +462,7 @@ def rewrite_assemblies(plugins: Path, out: Path, version: str, platform: str, ro
     output = log_path.read_text(encoding='utf-8', errors='replace')
     for name in STUBBED_ON.get(platform, []):
         target = out / f'{name}.dll'
-        if not target.exists() and not code:
+        if not target.exists() and not code and 'Assembly-CSharp-firstpass' in roots:
             sys.exit(f'No {target.name} to stub among the rewritten assemblies (STUBBED_ON)')
         if target.exists():
             stubbed = target.with_name(target.stem + '.stub.dll')

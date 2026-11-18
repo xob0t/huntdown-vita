@@ -5,7 +5,7 @@ Prose here is one sentence per line, so a diff shows only the sentences that cha
 
 ## What works
 
-The pipeline exports the Steam release (build 20193748), rewrites its four assemblies for Unity 2018.2 with no unresolved references, and assembles the Unity projects for the PS Vita and Windows.
+The pipeline exports the Steam release (build 20193748) or GOG's (1.227), rewrites its four assemblies for Unity 2018.2 with no unresolved references, and assembles the Unity projects for the PS Vita and Windows.
 The Windows Mono test player and the PS Vita VPK build with no errors.
 On the PS Vita (installed as HUNT00001), the game starts, plays its opening cutscene (X skips it), and shows the title and the main menu with their text and the PlayStation button prompts.
 It loads the rebuilt AssetBundles there: the global sound bundle's 261 clips and every level's sound bundles.

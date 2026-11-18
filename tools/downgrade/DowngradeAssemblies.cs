@@ -136,6 +136,15 @@ partial class DowngradeAssemblies
         matches[rule] = sum + sites;
     }
 
+    // Rules a release of the game lacks whole, so finding nothing for them is right: GOG's release has no
+    // analytics at all. The pass that finds the feature missing says so (Lacks), and the run doesn't fail.
+    static readonly HashSet<string> lacking = new HashSet<string>();
+
+    static void Lacks(params string[] rules)
+    {
+        foreach (string rule in rules) lacking.Add(rule);
+    }
+
     // module.GetType(name), counted: a game type a pass looks for must be in some assembly.
     static TypeDefinition GameType(ModuleDefinition module, string name)
     {
@@ -213,7 +222,8 @@ partial class DowngradeAssemblies
         Verify(output, args.Skip(4).Concat(new[] { Path.GetDirectoryName(Path.GetFullPath(args[2])) }));
         foreach (string problem in problems.Distinct()) Console.WriteLine("UNRESOLVED " + problem);
         foreach (string site in skipped.Distinct()) Console.WriteLine("SKIPPED " + site);
-        string[] unmatched = matches.Where(m => m.Value == 0).Select(m => m.Key).ToArray();
+        foreach (string rule in lacking.Where(r => matches.ContainsKey(r) && matches[r] == 0)) Console.WriteLine("ABSENT " + rule + " (this release of the game has none)");
+        string[] unmatched = matches.Where(m => m.Value == 0 && !lacking.Contains(m.Key)).Select(m => m.Key).ToArray();
         foreach (string rule in unmatched) Console.WriteLine("NO MATCH " + rule + " (in none of the assemblies; the game no longer has what it expects)");
         return problems.Count > 0 ? 3 : unmatched.Length > 0 ? 4 : 0;
     }
