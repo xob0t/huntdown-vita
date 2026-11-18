@@ -6,7 +6,7 @@ There are no game files in this repository. You bring your own copy, and the pip
 
 ## Where it stands
 
-Work in progress, but playable. The VPK builds, and on the console the game runs from its opening cutscene through the menus into the levels, which draw as on PC and play with the pad; Start and Select pause. A level takes about 15 s to load. The game runs at an almost locked 60 fps, with minor dips only in the heaviest scenes, when a lot of explosions and enemies are on screen. To get there, debris, blood and weather use smaller pools than on PC, effects, debris and weather are drawn as a few batched meshes instead of a sprite each, and the pad is read without Rewired's per-frame work. [docs/status.md](docs/status.md) has the details and the open issues.
+Playable, still in progress. The game runs from its opening cutscene through the menus into the levels, which look as on PC. It holds an almost locked 60 fps, with minor dips only in the heaviest fights. A level takes about 15 s to load. [docs/status.md](docs/status.md) has the details and the open issues.
 
 ## How it differs from the PC release
 
