@@ -11,11 +11,8 @@ Very well. Huntdown holds 60 fps on the PS Vita nearly all the time, and only th
 ## What's different from PC
 
 - It's single player only. Local co-op is off, and the menus don't offer it.
-- The buttons work like a PC gamepad, and R dashes. The touch screen isn't used.
 - There's a bit less debris, blood, rain and snow on screen than on PC, so the frame rate holds.
 - The two logo videos at startup are skipped.
-- The game never connects to Steam and sends no stats.
-- Saves go to `ux0:data/Huntdown`. Back that folder up if you care about them.
 
 [docs/status.md](docs/status.md) has the technical details.
 
