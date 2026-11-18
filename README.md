@@ -6,13 +6,13 @@ There are no game files in this repository. You bring your own copy, and the pip
 
 ## Where it stands
 
-Work in progress, but playable. The VPK builds, and on the console the game runs from its opening cutscene through the menus into the levels, which draw as on PC and play with the pad; Start and Select pause. A level takes about 15 s to load. The game plays at 60 fps most of the time, with minor dips in the heaviest fights, when a lot of explosions and enemies are on screen. Debris, blood and weather use smaller pools than on PC to keep it there, and effects, debris and weather are drawn as a few batched meshes instead of a sprite each. [docs/status.md](docs/status.md) has the details and the open issues.
+Work in progress, but playable. The VPK builds, and on the console the game runs from its opening cutscene through the menus into the levels, which draw as on PC and play with the pad; Start and Select pause. A level takes about 15 s to load. The game runs at an almost locked 60 fps, with minor dips only in the heaviest scenes, when a lot of explosions and enemies are on screen. To get there, debris, blood and weather use smaller pools than on PC, effects, debris and weather are drawn as a few batched meshes instead of a sprite each, and the pad is read without Rewired's per-frame work. [docs/status.md](docs/status.md) has the details and the open issues.
 
 ## How it differs from the PC release
 
 - The game's AssetBundles (its levels, area art and sound) are rebuilt for the target, under the same names.
 - On the PS Vita, sound clips stay compressed in memory as HEVAG, the console's own format, instead of being decompressed when loaded, and the music streams. Wolfmother's voice in the mission briefings is the exception: it is PCM, decompressed when loaded, since her mouth moves with its samples.
-- The pad goes through Rewired's PS Vita controller: R dashes, L does what Left Shoulder 1 does on a PC pad.
+- The pad uses Rewired's PS Vita map: R dashes, L does what Left Shoulder 1 does on a PC pad. Once the game has the pad, its button and stick reads are answered from the pad directly with that map, and Rewired's own update is skipped.
 - Steamworks is replaced with a stub, so no player signs in to Steam.
 - Local co-op is off: the second player can't join, and the menus leave out 2 PLAYERS and JOIN PLAYER 2. The resolution menu and the entries that quit the game are left out too, since the PS Vita has no use for them.
 
