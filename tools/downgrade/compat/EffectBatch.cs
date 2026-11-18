@@ -34,10 +34,14 @@ using UnityEngine;
 //                               on, other players' off); check: both, the batched ones tinted magenta and half
 //                               transparent over the game's, to see that they line up
 // With -hunt-heartbeat, a HUNT_EFFECT_BATCH line at each level's scans (what Purge dropped) and every 600 frames: the sprites and vertices drawn a frame, and Build's
-// time a frame in its three parts (gather: each sprite to its mesh; emit: the vertices; upload: the meshes).
+// time a frame in its three parts (gather: each sprite to its mesh; emit: the vertices; upload: the meshes), and how
+// many meshes were kept as they were or had only their vertices uploaded.
 // Measured in level 4-1 with -hunt-cheats god,ammo,grenadelauncher (LevelJump.cs): about 200 of these sprites in
 // view, Build took 2.2 ms a frame where the engine took 4-5 ms for them as sprites; the seconds under 58 fps went
-// from 23-34 of 115 to 8, under 55 from 11-17 to 3.
+// from 23-34 of 115 to 8, under 55 from 11-17 to 3. Build's cost since: about 0.7 ms per 100 sprites in 4-1 and 0.55
+// in 3-3, from 1.2-1.3 and 0.9-1.0 (gather a third of what it was: arrays instead of lists, no Matrix4x4 or Mathf
+// calls, the rotation's sine and cosine kept, an exact compare instead of a hash of floats; upload half: no
+// Mesh.Clear, and the uv and triangles kept when the shapes are the same).
 // Part of HuntCompat; see Compat2018.cs.
 namespace HuntCompat
 {
@@ -57,7 +61,12 @@ namespace HuntCompat
             public Vector3 position, scale = Vector3.one, euler;
             public bool active, visible = true, listed;
             public long sortKey;
-            public int id;
+            // Build's: the sprite's matrix (sprite space to world, in x and y, and its z) and shape, colour and order as
+            // last gathered, to tell an unchanged sprite; the cosine and sine of euler.z, worked out again when it changes.
+            public float m00, m01, m10, m11, x, y, z;
+            public Shape drawnShape;
+            public int drawnColor, drawnOrder;
+            public float angle, cos = 1f, sin;
         }
 
         class Shape
@@ -67,7 +76,6 @@ namespace HuntCompat
             public Texture2D texture;
             public int textureKey;
             public float radius;  // of the vertices around the pivot, for the view test
-            public int id;
         }
 
         class Bucket
@@ -76,8 +84,9 @@ namespace HuntCompat
             public MeshRenderer renderer;
             public Mesh mesh;
             public Material material;
-            public readonly List<Item> items = new List<Item>();
-            public readonly List<Matrix4x4> matrices = new List<Matrix4x4>();
+            // The frame's sprites (List<T>'s indexer cost some 60 ns a call), each with its matrix on it.
+            public Item[] items = new Item[16];
+            public int count, lastOrder;
             // The mesh's lists (Mesh.SetVertices and friends copy a list's count), at the frame's counts (Add and
             // RemoveRange, within a capacity kept at a power of two so that the array stays) and written through
             // their arrays (List<T>.this[] cost some 60 ns a write). Setting a list's count through reflection cost
@@ -93,10 +102,15 @@ namespace HuntCompat
             public int vertexCount, indexCount;
             public int order = int.MinValue;
             public int textureKey;
-            // What the mesh was made from: its sprites, each one's matrix, shape, colour and order, hashed in the
-            // order they came; the same next frame (resting blood, bullet holes) and the mesh is kept as it is.
-            public int signature, lastSignature, lastCount;
-            public bool drawn, mixed;
+            // What the mesh was made from: its sprites in the order they came (lastItems), and its shapes and colours in
+            // the mesh's order. The same sprites in the same order, none changed (changed), and the mesh is kept as it
+            // is (resting blood, bullet holes); the same shapes, and only the vertices, and the colours if they
+            // changed, are uploaded again (flying debris, falling snow): the uv and triangles stay.
+            public Item[] lastItems = new Item[16];
+            public Shape[] meshShapes = new Shape[16];
+            public int[] meshColors = new int[16];
+            public int lastCount, meshCount, meshVertices;
+            public bool drawn, mixed, changed;
         }
 
         class ByOrder : IComparer<Item>
@@ -138,14 +152,13 @@ namespace HuntCompat
         static int scanAt = -1, scanAgainAt = -1;
         static readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
         static readonly List<Bucket> bucketList = new List<Bucket>();
-        static int shapeIds;
         static readonly Bounds Everywhere = new Bounds(Vector3.zero, new Vector3(1e6f, 1e6f, 1e6f));
         static Camera view;
         static bool hooked;
         static int built, registered;
         static bool logged;  // with -hunt-heartbeat: what Build drew and took, every 600 frames (HUNT_EFFECT_BATCH)
         static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
-        static long gatherTicks, emitTicks, uploadTicks, drawnSprites, drawnVertices, unchanged;
+        static long gatherTicks, emitTicks, uploadTicks, drawnSprites, drawnVertices, unchanged, vertexOnly;
 
         public static bool On
         {
@@ -205,7 +218,6 @@ namespace HuntCompat
         static void Add(GameObject go, SpriteRenderer renderer, Item item, Transform transform)
         {
             item.go = go;
-            item.id = registered;
             item.material = renderer.sharedMaterial;
             item.layer = renderer.sortingLayerID;
             item.order = renderer.sortingOrder;
@@ -432,18 +444,19 @@ namespace HuntCompat
         {
             int frame = Time.frameCount;
             if (frame == scanAt || frame == scanAgainAt) Scan();
-            int kept = 0;
-            for (int i = 0; i < active.Count; i++)
+            Item[] list = ListArray<Item>.Of(active);
+            int listed = active.Count, kept = 0;
+            for (int i = 0; i < listed; i++)
             {
-                Item item = active[i];
+                Item item = list[i];
                 if (!item.active || item.go == null)
                 {
                     item.listed = false;
                     continue;
                 }
-                active[kept++] = item;
+                list[kept++] = item;
             }
-            active.RemoveRange(kept, active.Count - kept);
+            active.RemoveRange(kept, listed - kept);
 
             if (view == null) view = Camera.main;
             float left = float.MinValue, right = float.MaxValue, bottom = float.MinValue, top = float.MaxValue;
@@ -461,62 +474,74 @@ namespace HuntCompat
             long t0 = clock.ElapsedTicks;
             // Each sprite in view to its bucket, with its matrix (sprite space to world).
             Transform lastParent = null;
-            Matrix4x4 parentMatrix = Matrix4x4.identity;
-            for (int i = 0; i < active.Count; i++)
+            float p00 = 1f, p01 = 0f, p02 = 0f, p03 = 0f, p10 = 0f, p11 = 1f, p12 = 0f, p13 = 0f, p20 = 0f, p21 = 0f, p22 = 1f, p23 = 0f;
+            for (int i = 0; i < kept; i++)
             {
-                Item item = active[i];
+                Item item = list[i];
                 Shape shape = item.shape;
                 if (shape == null || !item.visible || item.color.a == 0) continue;
-                Matrix4x4 m;
+                if (!ReferenceEquals(item.parent, lastParent))
                 {
-                    if (!ReferenceEquals(item.parent, lastParent))
-                    {
-                        lastParent = item.parent;
-                        parentMatrix = lastParent != null ? lastParent.localToWorldMatrix : Matrix4x4.identity;
-                    }
-                    float sx = item.scale.x, sy = item.scale.y, cos = 1f, sin = 0f;
-                    if (item.euler.z != 0f)
-                    {
-                        float radians = item.euler.z * Mathf.Deg2Rad;
-                        cos = Mathf.Cos(radians);
-                        sin = Mathf.Sin(radians);
-                    }
-                    // parent * (translation, z rotation, scale), in x and y
-                    float p00 = parentMatrix.m00, p01 = parentMatrix.m01, p10 = parentMatrix.m10, p11 = parentMatrix.m11;
-                    Vector3 centre = parentMatrix.MultiplyPoint3x4(item.position);
-                    m = Matrix4x4.identity;
-                    m.m00 = sx * (p00 * cos + p01 * sin);
-                    m.m01 = sy * (p01 * cos - p00 * sin);
-                    m.m10 = sx * (p10 * cos + p11 * sin);
-                    m.m11 = sy * (p11 * cos - p10 * sin);
-                    m.m03 = centre.x;
-                    m.m13 = centre.y;
-                    m.m23 = centre.z;
+                    lastParent = item.parent;
+                    Matrix4x4 p = lastParent != null ? lastParent.localToWorldMatrix : Matrix4x4.identity;
+                    p00 = p.m00; p01 = p.m01; p02 = p.m02; p03 = p.m03;
+                    p10 = p.m10; p11 = p.m11; p12 = p.m12; p13 = p.m13;
+                    p20 = p.m20; p21 = p.m21; p22 = p.m22; p23 = p.m23;
                 }
-                float reach = shape.radius * Mathf.Max(Mathf.Abs(m.m00) + Mathf.Abs(m.m01), Mathf.Abs(m.m10) + Mathf.Abs(m.m11));
-                if (m.m03 + reach < left || m.m03 - reach > right || m.m13 + reach < bottom || m.m13 - reach > top) continue;
+                float sx = item.scale.x, sy = item.scale.y, cos = 1f, sin = 0f;
+                float angle = item.euler.z;
+                if (angle != 0f)
+                {
+                    if (angle != item.angle)
+                    {
+                        item.angle = angle;
+                        float radians = angle * Mathf.Deg2Rad;
+                        item.cos = Mathf.Cos(radians);
+                        item.sin = Mathf.Sin(radians);
+                    }
+                    cos = item.cos;
+                    sin = item.sin;
+                }
+                // parent * (translation, z rotation, scale), in x and y
+                float px = item.position.x, py = item.position.y, pz = item.position.z;
+                float x = p00 * px + p01 * py + p02 * pz + p03;
+                float y = p10 * px + p11 * py + p12 * pz + p13;
+                float z = p20 * px + p21 * py + p22 * pz + p23;
+                float m00 = sx * (p00 * cos + p01 * sin);
+                float m01 = sy * (p01 * cos - p00 * sin);
+                float m10 = sx * (p10 * cos + p11 * sin);
+                float m11 = sy * (p11 * cos - p10 * sin);
+                float reachX = (m00 < 0f ? -m00 : m00) + (m01 < 0f ? -m01 : m01);
+                float reachY = (m10 < 0f ? -m10 : m10) + (m11 < 0f ? -m11 : m11);
+                float reach = shape.radius * (reachX > reachY ? reachX : reachY);
+                if (x + reach < left || x - reach > right || y + reach < bottom || y - reach > top) continue;
                 Bucket bucket = item.bucket;
                 if (bucket == null || item.segments != segments || bucket.textureKey != shape.textureKey)
                 {
                     item.bucket = bucket = BucketOf(item, shape);
                     item.segments = segments;
                 }
-                if (bucket.items.Count > 0 && bucket.items[bucket.items.Count - 1].order != item.order) bucket.mixed = true;
-                item.sortKey = ((long)item.order << 32) | (uint)bucket.items.Count;
-                int h = bucket.signature;
-                h = h * 31 + item.id;
-                h = h * 31 + shape.id;
-                h = h * 31 + m.m03.GetHashCode();
-                h = h * 31 + m.m13.GetHashCode();
-                h = h * 31 + m.m00.GetHashCode();
-                h = h * 31 + m.m01.GetHashCode();
-                h = h * 31 + m.m10.GetHashCode();
-                h = h * 31 + m.m11.GetHashCode();
-                h = h * 31 + m.m23.GetHashCode();
-                h = h * 31 + (item.color.r | item.color.g << 8 | item.color.b << 16 | item.color.a << 24);
-                bucket.signature = h * 31 + item.order;
-                bucket.items.Add(item);
-                bucket.matrices.Add(m);
+                int order = item.order;
+                Color32 c = item.color;
+                int color = c.r | c.g << 8 | c.b << 16 | c.a << 24;
+                bool same = m00 == item.m00 && m01 == item.m01 && m10 == item.m10 && m11 == item.m11 && x == item.x && y == item.y &&
+                            z == item.z && ReferenceEquals(shape, item.drawnShape) && color == item.drawnColor && order == item.drawnOrder;
+                if (!same)
+                {
+                    item.m00 = m00; item.m01 = m01; item.m10 = m10; item.m11 = m11;
+                    item.x = x; item.y = y; item.z = z;
+                    item.drawnShape = shape;
+                    item.drawnColor = color;
+                    item.drawnOrder = order;
+                }
+                int n = bucket.count;
+                if (n > 0 && bucket.lastOrder != order) bucket.mixed = true;
+                bucket.lastOrder = order;
+                item.sortKey = ((long)order << 32) | (uint)n;
+                if (n == bucket.items.Length) System.Array.Resize(ref bucket.items, 2 * n);
+                bucket.items[n] = item;
+                bucket.count = n + 1;
+                if (!same || n >= bucket.lastCount || !ReferenceEquals(bucket.lastItems[n], item)) bucket.changed = true;
             }
 
             long t1 = clock.ElapsedTicks;
@@ -524,93 +549,67 @@ namespace HuntCompat
             for (int i = 0; i < bucketList.Count; i++)
             {
                 Bucket bucket = bucketList[i];
-                int count = bucket.items.Count;
+                int count = bucket.count;
+                if (count == 0 && !bucket.drawn) continue;
                 drawnSprites += count;
-                if (count > 0 && bucket.drawn && count == bucket.lastCount && bucket.signature == bucket.lastSignature)
+                bool mixed = bucket.mixed;
+                bucket.count = 0;
+                bucket.mixed = false;
+                if (count > 0 && bucket.drawn && count == bucket.lastCount && !bucket.changed)
                 {
                     // Nothing changed: the mesh stays.
                     unchanged++;
-                    bucket.items.Clear();
-                    bucket.matrices.Clear();
-                    bucket.mixed = false;
-                    bucket.signature = 0;
                     continue;
                 }
-                bucket.lastCount = count;
-                bucket.lastSignature = bucket.signature;
-                bucket.signature = 0;
+                bucket.changed = false;
+                bool sameShapes = false, sameColors = false;
                 if (count > 0)
                 {
-                    if (bucket.mixed)
-                    {
-                        // In sorting order; the matrices follow through the items' insertion index.
-                        bucket.items.Sort(Ordering);
-                    }
-                    int lowest = bucket.items[0].order;
-                    int vertexNeed = 0, indexNeed = 0;
-                    for (int k = 0; k < count; k++)
-                    {
-                        vertexNeed += bucket.items[k].shape.vertices.Length;
-                        indexNeed += bucket.items[k].shape.triangles.Length;
-                    }
-                    Reserve(bucket, vertexNeed, indexNeed);
-                    Vector3[] outVertices = bucket.vertexArray;
-                    Vector2[] outUv = bucket.uvArray;
-                    Color32[] outColors = bucket.colorArray;
-                    int[] outTriangles = bucket.triangleArray;
-                    int nv = 0, nt = 0;
-                    for (int k = 0; k < count; k++)
-                    {
-                        Item item = bucket.items[k];
-                        if (item.order < lowest) lowest = item.order;
-                        Matrix4x4 m = bucket.matrices[(int)(item.sortKey & 0xFFFFFFFF)];
-                        Shape shape = item.shape;
-                        int first = nv;
-                        Vector2[] vertices = shape.vertices, uv = shape.uv;
-                        Color32 color = check ? new Color32(255, 0, 255, (byte)(item.color.a / 2)) : item.color;
-                        float m00 = m.m00, m01 = m.m01, m03 = m.m03, m10 = m.m10, m11 = m.m11, m13 = m.m13, z = m.m23;
-                        for (int v = 0; v < vertices.Length; v++, nv++)
-                        {
-                            float x = vertices[v].x, y = vertices[v].y;
-                            outVertices[nv] = new Vector3(m03 + m00 * x + m01 * y, m13 + m10 * x + m11 * y, z);
-                            outUv[nv] = uv[v];
-                            outColors[nv] = color;
-                        }
-                        ushort[] triangles = shape.triangles;
-                        // A negative scale on one axis mirrors the sprite, and its triangles' winding: the sprite shader culls nothing.
-                        for (int t = 0; t < triangles.Length; t++) outTriangles[nt++] = first + triangles[t];
-                    }
-                    bucket.vertexCount = nv;
-                    bucket.indexCount = nt;
-                    if (lowest != bucket.order)
-                    {
-                        bucket.order = lowest;
-                        bucket.renderer.sortingOrder = lowest;
-                    }
+                    if (bucket.lastItems.Length < count) bucket.lastItems = new Item[bucket.items.Length];
+                    System.Array.Copy(bucket.items, bucket.lastItems, count);
+                    if (mixed) System.Array.Sort(bucket.items, 0, count, Ordering);  // in sorting order
+                    Emit(bucket, count, out sameShapes, out sameColors);
                 }
-                else
-                {
-                    bucket.vertexCount = bucket.indexCount = 0;
-                    if (bucket.drawn) Reserve(bucket, 0, 0);
-                }
+                else bucket.vertexCount = bucket.indexCount = 0;
+                bucket.lastCount = count;
                 bool draw = bucket.indexCount > 0;
                 drawnVertices += bucket.vertexCount;
                 long u0 = clock.ElapsedTicks;
-                if (draw || bucket.drawn) bucket.mesh.Clear();
                 if (draw)
                 {
-                    bucket.mesh.SetVertices(bucket.vertices);
-                    bucket.mesh.SetUVs(0, bucket.uv);
-                    bucket.mesh.SetColors(bucket.colors);
-                    bucket.mesh.SetTriangles(bucket.triangles, 0, false);
+                    if (sameShapes)
+                    {
+                        // The same vertex count: the uv and triangles stay.
+                        bucket.mesh.SetVertices(bucket.vertices);
+                        if (!sameColors) bucket.mesh.SetColors(bucket.colors);
+                    }
+                    else if (bucket.vertexCount < bucket.meshVertices)
+                    {
+                        // Fewer vertices than the mesh has: the triangles first, so that each set leaves the mesh's
+                        // indices within its vertices (no Clear, which drops the mesh's buffers).
+                        bucket.mesh.SetTriangles(bucket.triangles, 0, false);
+                        bucket.mesh.SetVertices(bucket.vertices);
+                        bucket.mesh.SetUVs(0, bucket.uv);
+                        bucket.mesh.SetColors(bucket.colors);
+                    }
+                    else
+                    {
+                        bucket.mesh.SetVertices(bucket.vertices);
+                        bucket.mesh.SetUVs(0, bucket.uv);
+                        bucket.mesh.SetColors(bucket.colors);
+                        bucket.mesh.SetTriangles(bucket.triangles, 0, false);
+                    }
+                    bucket.meshVertices = bucket.vertexCount;
                     bucket.mesh.bounds = Everywhere;
+                }
+                else
+                {
+                    if (bucket.drawn) bucket.mesh.Clear();
+                    bucket.meshCount = bucket.meshVertices = 0;
                 }
                 if (draw != bucket.drawn) bucket.renderer.enabled = draw;
                 bucket.drawn = draw;
                 upload += clock.ElapsedTicks - u0;
-                bucket.items.Clear();
-                bucket.matrices.Clear();
-                bucket.mixed = false;
             }
             long t2 = clock.ElapsedTicks;
             gatherTicks += t1 - t0;
@@ -622,8 +621,90 @@ namespace HuntCompat
                 Debug.Log("HUNT_EFFECT_BATCH " + registered + " registered, " + active.Count + " active, " + bucketList.Count + " meshes; per frame: " +
                           (drawnSprites / 600) + " sprites, " + (drawnVertices / 600) + " vertices, gather " + (gatherTicks * ms).ToString("F2") +
                           " ms, emit " + (emitTicks * ms).ToString("F2") + " ms, upload " + (uploadTicks * ms).ToString("F2") + " ms, " +
-                          (unchanged / 600) + " meshes kept as they were");
-                gatherTicks = emitTicks = uploadTicks = drawnSprites = drawnVertices = unchanged = 0;
+                          (unchanged / 600) + " meshes kept as they were, " + (vertexOnly / 600) + " with only their vertices uploaded");
+                gatherTicks = emitTicks = uploadTicks = drawnSprites = drawnVertices = unchanged = vertexOnly = 0;
+            }
+        }
+
+        // A bucket's sprites (in sorting order, count > 0) into its mesh's lists: all of it, or, with the same shapes in
+        // the same order as the mesh has (sameShapes), only the vertices and colours (sameColors: those didn't change).
+        static unsafe void Emit(Bucket bucket, int count, out bool sameShapes, out bool sameColors)
+        {
+            Item[] items = bucket.items;
+            Shape[] meshShapes = bucket.meshShapes;
+            bool shapes = bucket.drawn && count == bucket.meshCount;
+            int lowest = items[0].order, vertexNeed = 0, indexNeed = 0;
+            for (int k = 0; k < count; k++)
+            {
+                Item item = items[k];
+                Shape shape = item.shape;
+                if (item.order < lowest) lowest = item.order;
+                vertexNeed += shape.vertices.Length;
+                indexNeed += shape.triangles.Length;
+                if (shapes && !ReferenceEquals(meshShapes[k], shape)) shapes = false;
+            }
+            if (!shapes)
+            {
+                Reserve(bucket, vertexNeed, indexNeed);
+                if (meshShapes.Length < count)
+                {
+                    bucket.meshShapes = meshShapes = new Shape[items.Length];
+                    bucket.meshColors = new int[items.Length];
+                }
+            }
+            else vertexOnly++;
+            int[] meshColors = bucket.meshColors;
+            bool colors = shapes;
+            int nv = 0, nt = 0;
+            fixed (Vector3* outVertices = bucket.vertexArray)
+            fixed (Vector2* outUv = bucket.uvArray)
+            fixed (Color32* outColors = bucket.colorArray)
+            fixed (int* outTriangles = bucket.triangleArray)
+            {
+                for (int k = 0; k < count; k++)
+                {
+                    Item item = items[k];
+                    Shape shape = item.shape;
+                    Color32 color = check ? new Color32(255, 0, 255, (byte)(item.color.a / 2)) : item.color;
+                    int packed = color.r | color.g << 8 | color.b << 16 | color.a << 24;
+                    if (packed != meshColors[k]) colors = false;
+                    meshColors[k] = packed;
+                    meshShapes[k] = shape;
+                    int first = nv;
+                    float m00 = item.m00, m01 = item.m01, m03 = item.x, m10 = item.m10, m11 = item.m11, m13 = item.y, z = item.z;
+                    Vector2[] vertices = shape.vertices;
+                    int length = vertices.Length;
+                    fixed (Vector2* from = vertices)
+                    {
+                        for (int v = 0; v < length; v++, nv++)
+                        {
+                            float x = from[v].x, y = from[v].y;
+                            outVertices[nv] = new Vector3(m03 + m00 * x + m01 * y, m13 + m10 * x + m11 * y, z);
+                            outColors[nv] = color;
+                        }
+                    }
+                    if (shapes) continue;
+                    fixed (Vector2* uv = shape.uv)
+                        for (int v = 0; v < length; v++) outUv[first + v] = uv[v];
+                    ushort[] triangles = shape.triangles;
+                    int indices = triangles.Length;
+                    // A negative scale on one axis mirrors the sprite, and its triangles' winding: the sprite shader culls nothing.
+                    fixed (ushort* from = triangles)
+                        for (int t = 0; t < indices; t++) outTriangles[nt++] = first + from[t];
+                }
+            }
+            bucket.meshCount = count;
+            if (!shapes)
+            {
+                bucket.vertexCount = nv;
+                bucket.indexCount = nt;
+            }
+            sameShapes = shapes;
+            sameColors = colors;
+            if (lowest != bucket.order)
+            {
+                bucket.order = lowest;
+                bucket.renderer.sortingOrder = lowest;
             }
         }
 
@@ -672,7 +753,6 @@ namespace HuntCompat
             {
                 vertices = vertices, uv = sprite.uv, triangles = sprite.triangles, texture = texture, radius = radius,
                 textureKey = texture != null ? texture.GetInstanceID() : 0,
-                id = ++shapeIds,  // not shapes.Count: Purge removes shapes, and an id is in the meshes' signatures
             };
             return shape;
         }
