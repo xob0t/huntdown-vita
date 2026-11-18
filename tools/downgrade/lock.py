@@ -243,6 +243,7 @@ def take(name, holder, wait, process=False, reader=False):
     reader: a job that only reads what the build lock guards (vita.py's sync of the PS Vita build): it
     doesn't wait for the other build lock, and the other doesn't wait for it (building)."""
     lock = path(name)
+    lock.parent.mkdir(parents=True, exist_ok=True)  # work/ doesn't exist before a checkout's first build
     others = [] if reader else other_build_locks(name)
     end = time.time() + wait
     own = f'pid {os.getpid()} {process_start(os.getpid())}\n' if process else ''

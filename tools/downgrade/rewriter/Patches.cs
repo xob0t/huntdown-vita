@@ -127,11 +127,18 @@ partial class DowngradeAssemblies
 
     // Analytics.LoginWith and LoginWithXbox (coroutines the game starts at launch) return HuntCompat
     // Offline.Nothing instead: no request goes to the developer's stats server, Analytics.isOK stays false,
-    // and every other report, which checks it, is skipped (compat/Offline.cs).
+    // and every other report, which checks it, is skipped (compat/Offline.cs). GOG's release has no Analytics
+    // class, and its Main starts none: nothing there to switch off.
     static int PatchAnalyticsLogin(ModuleDefinition module)
     {
         TypeDefinition type = GameType(module, "Analytics");
-        if (type == null) return 0;
+        if (type == null)
+        {
+            TypeDefinition main = module.GetType("Main");
+            if (main != null && !main.Fields.Any(f => f.FieldType.Name == "Analytics"))
+                Lacks("type Analytics", "pass PatchAnalyticsLogin");
+            return 0;
+        }
         int count = 0;
         foreach (MethodDefinition method in type.Methods.Where(m => m.Name == "LoginWith" || m.Name == "LoginWithXbox"))
         {

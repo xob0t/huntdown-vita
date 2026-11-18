@@ -7,7 +7,7 @@ The pipeline only reads the game.
 It writes the export and the Unity projects to `work/`, the players and the VPK to `builds/`, and the logs to `artifacts/`. Every step shows a bar or a spinner while it runs, with what it is on; the tools it runs (the C# compiler, the rewriter, UnityLinker, IL2CPP, the native plugin's build) write their output to logs, `artifacts/downgrade/tools/` for the small ones, and a step that fails prints its log's last lines.
 Prose here is one sentence per line, so a diff shows only the sentences that changed.
 
-You need Windows 10 or 11 on x64, and Huntdown from Steam.
+You need Windows 10 or 11 on x64, and Huntdown from Steam or GOG.
 With [uv](https://docs.astral.sh/uv/) installed, the short version is:
 
 ```powershell
@@ -22,7 +22,7 @@ The builder writes the player's data and AssetBundles again on each run, and reu
 
 ## 1. Set up
 
-1. Install Huntdown from Steam and update it to the current release.
+1. Install Huntdown from Steam or GOG and update it to the current release.
 2. Install uv, then open a new terminal so it finds uv:
 
    ```powershell
@@ -79,11 +79,11 @@ uv run tools/setup.py download editor il2cpp vita assetripper dotnet cecil --to 
 
 The pipeline reads the game from `HUNT_GAME` if it is set, else from `C:\Program Files (x86)\Steam\steamapps\common\Huntdown`.
 Setup also searches your other Steam libraries, and offers to set `HUNT_GAME` if it finds the game in one.
-The tools also look in `C:\GOG Games\Huntdown`, but no GOG release has been tried.
+The tools also look in `C:\GOG Games\Huntdown`, and setup finds a GOG install elsewhere from the folder GOG's installer recorded.
 
-The rules were written for Steam build 20193748, made with Unity 2019.4.13f1.
+The rules were written for Steam build 20193748 and checked on GOG 1.227, both made with Unity 2019.4.13f1. GOG's is the game's older build 277 (Steam's is 279): it has no Steamworks.NET and no analytics, and lacks a few of the later fixes, such as the footstep sounds in water.
 The doctor tells it from other releases by the hash of `Huntdown_Data\Managed\Assembly-CSharp.dll`.
-Steamworks.NET is replaced with a stub (`STUBBED_ON` in `pipeline.py`), so no player signs in to Steam.
+Steamworks.NET is replaced with a stub (`STUBBED_ON` in `pipeline.py`), so no player signs in to Steam (GOG's release has no Steamworks.NET).
 
 ### The PS Vita SDK
 
@@ -125,7 +125,7 @@ uv run tools/setup.py doctor --target vita --unity           # the editor's PS V
 
 The doctor prints a checklist of what the targets need, with the command that fixes each missing item, and the free space on the repository's drive.
 It changes nothing, and exits with code 1 if a required item is missing.
-Items marked `optional` don't stop a build: Mono.Cecil and USCSandbox (fetched or built on first use), the console's address, and a release of the game other than Steam build 20193748.
+Items marked `optional` don't stop a build: Mono.Cecil and USCSandbox (fetched or built on first use), the console's address, and a release of the game other than Steam build 20193748 or GOG 1.227.
 
 ## 2. Build
 
@@ -152,7 +152,7 @@ If another job runs the pipeline, it waits.
 | --- | --- |
 | `--vita`, `--windows`, `--il2cpp` | The targets. Without any, `build.py` builds the PS Vita app. |
 | `--unity` | Build the PS Vita app with the Unity editor instead of the builder. Setup then installs the editor and patches its license check. |
-| `--game <folder>` | The game's folder, if it isn't in Steam's default folder. Setup saves it in `HUNT_GAME`. |
+| `--game <folder>` | The game's folder, if it isn't in Steam's or GOG's default folder. Setup saves it in `HUNT_GAME`. |
 | `--vita-sdk <path>`, `--no-unigate` | Passed to setup. |
 | `--skip-setup` | Go straight to the pipeline. |
 | `--from <stage>` | Start at `rip`, `project`, `build` or `package`, when the earlier stages are done. |
@@ -245,7 +245,7 @@ After that, `vita.py sync` updates the app from the PC.
 Fix it and run `build.py` again: it picks up where it stopped.
 
 - Setup: a download whose hash doesn't match is deleted, and setup stops; run it again. "unigate could not patch" means Unity is running while the editor still needs the patch; close it. "To do" lines at the end are steps setup couldn't take, such as an offer you declined; `build.py` won't build until they are done.
-- The game: "another release than the rules were written for" means your `Assembly-CSharp.dll` differs from Steam build 20193748's. It may still build; if a rule stops in `project`, update the game or have Steam verify its files. "built with Unity ..., the rules expect 2019.4.13f1" has the same fix. If the doctor finds no `Huntdown.exe`, run `uv run tools/setup.py --game <folder>`.
+- The game: "another release than the rules were written for" means your `Assembly-CSharp.dll` differs from Steam build 20193748's and GOG 1.227's. It may still build; if a rule stops in `project`, update the game or have Steam or GOG Galaxy verify its files. "built with Unity ..., the rules expect 2019.4.13f1" has the same fix. If the doctor finds no `Huntdown.exe`, run `uv run tools/setup.py --game <folder>`.
 - `rip`: "AssetRipper did not start" or "AssetRipper export produced no project": check `tools/external/assetripper-2.0.0` and `artifacts/downgrade/assetripper.log`.
 - `project`: "No .NET 8 SDK" means `tools/external/dotnet` is missing; run setup. A rewriter failure names the assemblies that don't resolve, with its log in `artifacts/downgrade/rewrite-<version>-<platform>.log`. "expected at least ... The export changed or the rule no longer matches it" means a rule matched less than on the export it was written for, usually another release of the game.
 - `build` with the builder: each step names what it is on, and a failure prints the step and the file. [builder.md](builder.md) lists the checks that compare its output with the editor's.
