@@ -4,17 +4,20 @@
 
 There are no game files in this repository. You bring your own copy, and the pipeline only reads it.
 
-## Where it stands
+## How it plays
 
-Playable, still in progress. The game runs from its opening cutscene through the menus into the levels, which look as on PC. It holds an almost locked 60 fps, with minor dips only in the heaviest fights. A level takes about 15 s to load. [docs/status.md](docs/status.md) has the details and the open issues.
+Very well. Huntdown holds 60 fps on the PS Vita nearly all the time, and only the biggest fights, with lots of explosions on screen, dip a little. A level takes about 15 seconds to load. If you have a Vita and the game on Steam, play it.
 
-## How it differs from the PC release
+## What's different from PC
 
-- The game's AssetBundles (its levels, area art and sound) are rebuilt for the target, under the same names.
-- On the PS Vita, sound clips stay compressed in memory as HEVAG, the console's own format, instead of being decompressed when loaded, and the music streams. Wolfmother's voice in the mission briefings is the exception: it is PCM, decompressed when loaded, since her mouth moves with its samples.
-- The pad uses Rewired's PS Vita map: R dashes, L does what Left Shoulder 1 does on a PC pad. Once the game has the pad, its button and stick reads are answered from the pad directly with that map, and Rewired's own update is skipped.
-- Steamworks is replaced with a stub, so no player signs in to Steam.
-- Local co-op is off: the second player can't join, and the menus leave out 2 PLAYERS and JOIN PLAYER 2. The resolution menu and the entries that quit the game are left out too, since the PS Vita has no use for them.
+- It's single player only. Local co-op is off, and the menus don't offer it.
+- The buttons work like a PC gamepad, and R dashes. The touch screen isn't used.
+- There's a bit less debris, blood, rain and snow on screen than on PC, so the frame rate holds.
+- The two logo videos at startup are skipped.
+- The game never connects to Steam and sends no stats.
+- Saves go to `ux0:data/Huntdown`. Back that folder up if you care about them.
+
+[docs/status.md](docs/status.md) has the technical details.
 
 ## Building
 
