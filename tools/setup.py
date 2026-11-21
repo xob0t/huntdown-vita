@@ -63,6 +63,7 @@ from common import (
     finish_deleting,
     mono_cecil,
     replace_path,
+    root_too_long,
     unity_files,
 )
 from rich.text import Text
@@ -805,6 +806,9 @@ def main():
     args = parser.parse_args()
     if args.vita_sdk:
         args.vita = True
+    # Before the downloads: from a deeper folder the PS Vita build fails at IL2CPP (common.MAX_ROOT).
+    if args.vita and not args.unity and (problem := root_too_long()):
+        sys.exit(f'setup.py: {problem}')
     setup = Setup(args)
     targets = [t for t, on in (('vita', args.vita), ('il2cpp', args.il2cpp)) if on] or ['windows']
     if not args.dry_run:  # what an interrupted extraction or delete left, so nothing half there is trusted
