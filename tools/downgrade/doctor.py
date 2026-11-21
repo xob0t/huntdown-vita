@@ -29,6 +29,7 @@ from common import (
     EDITORS,
     EXTERNAL,
     GOG_GAME,
+    MAX_ROOT,
     ROOT,
     SOURCE_VERSION,
     STEAM,
@@ -40,6 +41,7 @@ from common import (
     editor_data,
     env,
     file_hash,
+    root_too_long,
 )
 from rich.text import Text
 
@@ -769,6 +771,16 @@ def space_needed(targets):
     return need - shared
 
 
+def check_folder():
+    """The repository's folder is short enough for IL2CPP (common.MAX_ROOT)."""
+    return Check(
+        'Folder path',
+        not root_too_long(),
+        f"{len(str(ROOT))} characters; IL2CPP's files need it at {MAX_ROOT} or fewer",
+        r'move the folder to a short path such as C:\huntdown',
+    )
+
+
 def check_space(targets):
     need = space_needed(targets)
     free = free_gb(WORK)
@@ -901,6 +913,8 @@ def checks_for(targets, game: Path, license_check=False, unity=False):
     checks.append(check_editor_data(version, vita))
     if vita:
         checks += [check_vc_runtime(), *check_vita_sdk(unity), check_vita_host()]
+    if vita and not unity:
+        checks.append(check_folder())
     checks.append(check_space(targets))
     # The license check starts the editor with the PS Vita target when the targets include it (that also
     # checks the module loads), else the Windows one. The builder needs neither.
