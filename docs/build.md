@@ -8,6 +8,7 @@ It writes the export and the Unity projects to `work/`, the players and the VPK 
 Prose here is one sentence per line, so a diff shows only the sentences that changed.
 
 You need Windows 10 or 11 on x64, and Huntdown from Steam or GOG.
+The repository's folder needs a path of at most 72 characters, such as `C:\huntdown\huntdown-vita` (see [When something fails](#when-something-fails)).
 With [uv](https://docs.astral.sh/uv/) installed, the short version is:
 
 ```powershell
@@ -244,11 +245,16 @@ After that, `vita.py sync` updates the app from the PC.
 `build.py` stops at the first failure and says what failed.
 Fix it and run `build.py` again: it picks up where it stopped.
 
+- "This folder's path is ... characters long": `build.py` and setup stop before the downloads when the repository's folder is deeper than 72 characters, and the doctor lists it as `Folder path`.
+  Unity 2018.2's `il2cpp.exe` is a .NET Framework program held to Windows' 260-character path limit, whatever Windows' long-path setting, and the longest header it reads is 186 characters below the folder.
+  From a deeper folder it died 20 minutes into a build with `PathTooLongException` ("The specified output path is too long to write generated files" in `work/builder/il2cpp/il2cpp.log`) behind an "il2cpp.exe has stopped working" dialog.
+  Move the whole folder to a short path such as `C:\huntdown` and run `build.py` again there.
+- The pipeline turns Windows' crash dialogs off for the tools it starts (`SetErrorMode`, which they inherit; `common.no_crash_dialogs`), so a tool that crashes exits rather than waiting behind "has stopped working", and its error is in its log and at the end of the output.
 - Setup: a download whose hash doesn't match is deleted, and setup stops; run it again. "unigate could not patch" means Unity is running while the editor still needs the patch; close it. "To do" lines at the end are steps setup couldn't take, such as an offer you declined; `build.py` won't build until they are done.
 - The game: "another release than the rules were written for" means your `Assembly-CSharp.dll` differs from Steam build 20193748's and GOG 1.227's. It may still build; if a rule stops in `project`, update the game or have Steam or GOG Galaxy verify its files. "built with Unity ..., the rules expect 2019.4.13f1" has the same fix. If the doctor finds no `Huntdown.exe`, run `uv run tools/setup.py --game <folder>`.
 - `rip`: "AssetRipper did not start" or "AssetRipper export produced no project": check `tools/external/assetripper-2.0.0` and `artifacts/downgrade/assetripper.log`.
 - `project`: "No .NET 8 SDK" means `tools/external/dotnet` is missing; run setup. A rewriter failure names the assemblies that don't resolve, with its log in `artifacts/downgrade/rewrite-<version>-<platform>.log`. "expected at least ... The export changed or the rule no longer matches it" means a rule matched less than on the export it was written for, usually another release of the game.
-- `build` with the builder: each step names what it is on, and a failure prints the step and the file. [builder.md](builder.md) lists the checks that compare its output with the editor's.
+- `build` with the builder: each step names what it is on, and a failure prints the step and the file. UnityLinker's log is `work/builder/il2cpp/unitylinker.log`, IL2CPP's `work/builder/il2cpp/il2cpp.log`. [builder.md](builder.md) lists the checks that compare its output with the editor's.
 - `build` with the editor: the editor's log is `artifacts/downgrade/build-<version>-<platform>.log` (with `-il2cpp` or `-scenes` for those builds), and the pipeline prints a summary of it. A good build logs `DOWNGRADE_BUILD Succeeded errors=0`; the stage stops on any error in the build report and lists them, and they are also in `<player>.messages.txt` beside the player. "A Unity editor has ... open" means an editor still has the project open. If the editor stops at once, run `uv run tools/setup.py doctor --license`; a failed check leaves its log in `work/license-check.log`. If IL2CPP or the PS Vita steps fail, run `uv run tools/setup.py doctor --target vita`, from a new shell.
 - `quickcode`: "No saved PS Vita build to update" means there is no full editor build yet; run `pipeline.py build --unity` once.
 - Locks: "Held by another run" means another pipeline holds a build lock; `uv run tools/downgrade/lock.py status` shows who.
