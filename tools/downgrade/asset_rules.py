@@ -272,6 +272,12 @@ PLATFORM_QUALITY_RULES = {}
 # game's), where 2018 has m_AutoSimulation, which the export writes as 0: physics would never step.
 PHYSICS_RULES = {'m_AutoSimulation': '1'}
 
+# Audio settings per platform. The game has 32 real voices: in a busy fight on the PS Vita (3-3) sounds went
+# virtual, unheard, with 11-14 sources playing (a source's one-shots are voices of their own), and a player heard
+# automatic weapons drop out. 64 measured the same as 32 on the console (bench.sh 3-3, two runs each: 59.9 fps,
+# 16.7 ms a frame, UpdateAudio 0.6-0.8 ms, FMOD's clock at 1.000 of real time).
+PLATFORM_AUDIO_RULES = {'vita': {'m_RealVoiceCount': '64'}}
+
 
 # The export writes the game's productGUID as Unity 2022 does, a mapping of its four 32-bit words, which 2018.2
 # doesn't read: the editor then made a new random one at every build, into the project's settings and the
@@ -318,6 +324,15 @@ def settings_overlay(exported: Path, platform: str):
         if count != 1:
             sys.exit(f'DynamicsManager has {count} entries for {key}')
     overlay[relative] = text.encode('utf-8')
+    audio_rules = PLATFORM_AUDIO_RULES.get(platform, {})
+    if audio_rules:
+        relative = Path('ProjectSettings') / 'AudioManager.asset'
+        text = (exported / relative).read_text(encoding='utf-8')
+        for key, value in audio_rules.items():
+            text, count = re.subn(rf'^(  {key}:).*$', rf'\g<1> {value}', text, flags=re.MULTILINE)
+            if count != 1:
+                sys.exit(f'AudioManager has {count} entries for {key}')
+        overlay[relative] = text.encode('utf-8')
     return overlay
 
 
