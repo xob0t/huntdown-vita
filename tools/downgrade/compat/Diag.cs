@@ -45,6 +45,9 @@ namespace HuntCompat
             "-hunt-stall-after <t>    with -hunt-stall-dump, only frames that start t seconds or more after startup (skips earlier stalls)\n" +
             "-hunt-stall-from render  with -hunt-stall-dump, time from just before the engine renders (Application.onBeforeRender), not\n" +
             "                         from Diag's Update: a dump some ms later samples the rendering, not the next frame's scripts\n" +
+            "-hunt-census <s>         every s seconds, a HUNT_CENSUS line: the loaded textures, meshes, sprites, clips, materials,\n" +
+            "                         GameObjects and AssetBundles, counted (and the textures' and meshes' sizes), runtime-made\n" +
+            "                         textures (no name) apart, for what leaks across restarts (takes some ms each time)\n" +
             "-hunt-find <regex> <s>   s seconds after each scene load, log every renderer (active or not) whose hierarchy path matches\n" +
             "                         the regex: active, enabled, isVisible, bounds, mesh, materials and shaders (HUNT_FIND), for\n" +
             "                         what looks missing in play";
@@ -58,6 +61,7 @@ namespace HuntCompat
         static System.Text.RegularExpressions.Regex findPattern;
         static float findAfter = -1f;
         static float stallDump = -1f, stallAfter;
+        static float census = -1f, lastCensus;
         static volatile float frameStartTime;  // realtimeSinceStartup at frameStartTicks
         static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
         static long frameStartTicks;
@@ -114,6 +118,7 @@ namespace HuntCompat
                 findPattern = new System.Text.RegularExpressions.Regex(find);
                 findAfter = HuntFlags.NumberAt(args, "-hunt-find", 2, 5f);
             }
+            census = HuntFlags.Number(args, "-hunt-census", -1f);
             stallDump = HuntFlags.Number(args, "-hunt-stall-dump", -1f);
             stallAfter = HuntFlags.Number(args, "-hunt-stall-after", 0f);
             if (stallDump > 0f) new System.Threading.Thread(WatchForStall) { IsBackground = true, Name = "HuntStallWatch" }.Start();
@@ -243,6 +248,11 @@ namespace HuntCompat
             frameSum += delta;
             if (delta > worst) worst = delta;
             if (heartbeat > 0f && now - lastBeat >= heartbeat) Beat(now);
+            if (census > 0f && now - lastCensus >= census)
+            {
+                lastCensus = now;
+                Census(now - started);
+            }
             if (shotsEvery > 0f && shotsPrefix != null && now - started >= shotsAfter && now - lastShots >= shotsEvery)
             {
                 lastShots = now;
@@ -339,6 +349,63 @@ namespace HuntCompat
             }
             foreach (string action in Actions)
                 if ((bool)rewiredButtonDown.Invoke(rewiredPlayer, new object[] { action })) Debug.Log("HUNT_INPUT action " + action);
+        }
+
+        // -hunt-census: what is loaded, counted. Textures by their pixels (MB at 4 bytes a pixel, what the
+        // game's uncompressed RGBA32 sheets take), the ones with no name (made at run time: the game's text)
+        // apart; meshes by their vertices.
+        static void Census(float t)
+        {
+            int textures = 0, unnamed = 0;
+            double pixels = 0, unnamedPixels = 0;
+            var byName = new Dictionary<string, int>();
+            foreach (Texture2D texture in Resources.FindObjectsOfTypeAll<Texture2D>())
+            {
+                textures++;
+                double size = (double)texture.width * texture.height;
+                pixels += size;
+                if (!string.IsNullOrEmpty(texture.name))
+                {
+                    string key = texture.name + "(" + texture.width + "x" + texture.height + ")";
+                    int seen;
+                    byName.TryGetValue(key, out seen);
+                    byName[key] = seen + 1;
+                }
+                if (string.IsNullOrEmpty(texture.name))
+                {
+                    unnamed++;
+                    unnamedPixels += size;
+                }
+            }
+            int meshes = 0;
+            long vertices = 0;
+            foreach (Mesh mesh in Resources.FindObjectsOfTypeAll<Mesh>())
+            {
+                meshes++;
+                vertices += mesh.vertexCount;
+            }
+            int renderTextures = Resources.FindObjectsOfTypeAll<RenderTexture>().Length;
+            int sprites = Resources.FindObjectsOfTypeAll<Sprite>().Length;
+            int clips = 0, loadedClips = 0;
+            foreach (AudioClip clip in Resources.FindObjectsOfTypeAll<AudioClip>())
+            {
+                clips++;
+                if (clip.loadState == AudioDataLoadState.Loaded) loadedClips++;
+            }
+            int materials = Resources.FindObjectsOfTypeAll<Material>().Length;
+            int objects = Resources.FindObjectsOfTypeAll<GameObject>().Length;
+            int bundles = Resources.FindObjectsOfTypeAll<AssetBundle>().Length;
+            Debug.Log(new StringBuilder("HUNT_CENSUS t=").Append(t.ToString("F1", Inv))
+                .Append(" textures=").Append(textures).Append(" textureMB=").Append((pixels * 4 / 1048576.0).ToString("F1", Inv))
+                .Append(" unnamedTextures=").Append(unnamed).Append(" unnamedMB=").Append((unnamedPixels * 4 / 1048576.0).ToString("F2", Inv))
+                .Append(" renderTextures=").Append(renderTextures)
+                .Append(" meshes=").Append(meshes).Append(" meshVerts=").Append(vertices)
+                .Append(" sprites=").Append(sprites).Append(" clips=").Append(clips).Append('/').Append(loadedClips)
+                .Append(" materials=").Append(materials).Append(" gameObjects=").Append(objects).Append(" bundles=").Append(bundles).ToString());
+            // Textures loaded more than once under one name: a sheet read again while its old copy stays.
+            var twice = byName.Where(p => p.Value > 1).OrderByDescending(p => p.Value).Take(12).ToArray();
+            if (twice.Length > 0)
+                Debug.Log("HUNT_CENSUS_DUP " + string.Join(" ", twice.Select(p => p.Key + "=" + p.Value).ToArray()));
         }
 
         // The share of the screen a world-space box covers, clipped to the screen (1: all of it).

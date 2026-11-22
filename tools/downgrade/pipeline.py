@@ -356,6 +356,7 @@ COMPAT_SOURCES = [
             'Prof',
             'Pools',
             'Gc',
+            'LevelAssets',
             'TouchInput',
             'Fades',
             'Phases',
