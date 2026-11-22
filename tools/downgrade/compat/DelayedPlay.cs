@@ -11,6 +11,7 @@ using UnityEngine;
 // AudioSources here. A source paused while its delay runs, or in the frame it was started, is stopped instead, with
 // what was left of the delay, and UnPause starts it again with that delay: intro and loop start together from the
 // unpause, the loop the intro's length later. Stopped, it reports isPlaying false, as a paused source does.
+// A source started gets its mixer group's gain first (MixVolume.cs).
 // Part of HuntCompat; see Compat2018.cs.
 namespace HuntCompat
 {
@@ -32,6 +33,7 @@ namespace HuntCompat
         public static void PlayDelayed(AudioSource source, float delay)
         {
             Forget(source);
+            MixVolume.Prepare(source);
             if (delay > 0f) source.PlayDelayed(delay);
             else source.Play();
             starts[source] = AudioSettings.dspTime + delay;
@@ -76,6 +78,7 @@ namespace HuntCompat
                 PlayDelayed(source, (float)left);
                 return;
             }
+            MixVolume.Prepare(source);
             source.UnPause();
         }
     }

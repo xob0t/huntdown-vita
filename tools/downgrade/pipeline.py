@@ -365,6 +365,7 @@ COMPAT_SOURCES = [
             'RewiredDirect',
             'AudioLog',
             'DelayedPlay',
+            'MixVolume',
         )
     ),
 ]

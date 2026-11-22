@@ -672,6 +672,48 @@ partial class DowngradeAssemblies
         return count;
     }
 
+    // The game's AudioMixer.SetFloat calls and its AudioSource volume, outputAudioMixerGroup and Play calls go to
+    // HuntCompat MixVolume, which applies the mixer's volumes on the sources: the PS Vita doesn't apply them, so the
+    // pause menu's mute and the sound and music volumes did nothing (compat/MixVolume.cs). Snd's Play, PlayDelayed
+    // and UnPause calls, which PatchDelayedPlay sent to DelayedPlay before this pass, call MixVolume from there.
+    static readonly Dictionary<string, string> MixVolumeCalls = new Dictionary<string, string>
+    {
+        { "set_volume/1", "SetVolume" }, { "get_volume/0", "GetVolume" },
+        { "set_outputAudioMixerGroup/1", "SetOutputGroup" },
+        { "Play/0", "Play" }, { "PlayDelayed/1", "PlayDelayed" }, { "PlayScheduled/1", "PlayScheduled" },
+        { "PlayOneShot/1", "PlayOneShot" }, { "PlayOneShot/2", "PlayOneShotScaled" }, { "UnPause/0", "UnPause" },
+    };
+
+    static int PatchMixVolume(ModuleDefinition module)
+    {
+        if (GameType(module, "Snd") == null) return 0;
+        int count = 0, setFloats = 0, volumes = 0;
+        foreach (TypeDefinition type in AllTypes(module.Types))
+            foreach (MethodDefinition method in type.Methods.Where(m => m.HasBody))
+                foreach (Instruction call in method.Body.Instructions)
+                {
+                    var called = call.Operand as MethodReference;
+                    if ((call.OpCode != OpCodes.Call && call.OpCode != OpCodes.Callvirt) || called == null || !called.HasThis)
+                        continue;
+                    string target;
+                    string declaring = called.DeclaringType.FullName;
+                    if (declaring == "UnityEngine.Audio.AudioMixer" && called.Name == "SetFloat" && called.Parameters.Count == 2)
+                    {
+                        target = "SetFloat";
+                        setFloats++;
+                    }
+                    else if (declaring != "UnityEngine.AudioSource" ||
+                        !MixVolumeCalls.TryGetValue(called.Name + "/" + called.Parameters.Count, out target))
+                        continue;
+                    if (target == "SetVolume") volumes++;
+                    call.OpCode = OpCodes.Call;
+                    call.Operand = CompatMethod(module, "MixVolume", target);
+                    count++;
+                }
+        if (setFloats == 0 || volumes == 0) throw new InvalidOperationException("Snd's module: no AudioMixer.SetFloat or AudioSource.volume calls");
+        return count;
+    }
+
     // Every Dictionary<string, AudioClip> indexer read in the game's code (Snd.levelClips["..."]) goes to HuntCompat
     // Clips.Get(dictionary, name), which logs a missing name and throws the same (compat/Clips.cs). Same stack.
     static int RouteClipLookups(ModuleDefinition module)
