@@ -320,6 +320,18 @@ partial class DowngradeAssemblies
         return 2;
     }
 
+    // Level.MakeLevel (a level's load, reload or boss stage) calls HuntCompat LevelAssets.LevelMade first: the last
+    // level's scenery, which the game's Unload(false) of its bundles leaves loaded, is freed before the new one is
+    // read (compat/LevelAssets.cs).
+    static int PatchLevelAssetUnload(ModuleDefinition module)
+    {
+        TypeDefinition level = GameType(module, "Level");
+        if (level == null) return 0;
+        MethodDefinition makeLevel = level.Methods.Single(m => m.Name == "MakeLevel" && m.Parameters.Count == 1);
+        Prepend(makeLevel, Instruction.Create(OpCodes.Call, CompatMethod(module, "LevelAssets", "LevelMade")));
+        return 1;
+    }
+
     // Under the build switch HUNT_PROF=1 (common.BUILD_SWITCHES, a code switch), every FrameEvent (the game's play
     // objects' return a bool, which stays on the stack under Exit's call) and every void Update,
     // LateUpdate and FixedUpdate of the game's classes runs between HuntCompat Prof.Enter and Prof.Exit (its
