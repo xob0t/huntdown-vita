@@ -8,7 +8,7 @@ It writes the export and the Unity projects to `work/`, the players and the VPK 
 Prose here is one sentence per line, so a diff shows only the sentences that changed.
 
 You need Windows 10 or 11 on x64, and Huntdown from Steam or GOG.
-The repository's folder needs a path of at most 72 characters, such as `C:\huntdown` (see [When something fails](#when-something-fails)).
+Put the repository in a short folder such as `C:\huntdown` (see [When something fails](#when-something-fails)).
 With [uv](https://docs.astral.sh/uv/) installed, the short version is:
 
 ```powershell
