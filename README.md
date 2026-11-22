@@ -26,8 +26,7 @@ You need Windows 10 or 11 on x64, Huntdown from Steam or GOG, about 10 GB of fre
    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
 
-2. Download [huntdown-vita.zip](https://github.com/xob0t/huntdown-vita/releases/latest/download/huntdown-vita.zip), right-click it, choose **Extract All** and change the folder to `C:\huntdown` (or clone this repository there).
-   Keep the path short. Unity's IL2CPP can't open its own files from a folder whose path is longer than 72 characters, and a folder on a OneDrive desktop can be that deep. The build checks this before it starts.
+2. Download [huntdown-vita.zip](https://github.com/xob0t/huntdown-vita/releases/latest/download/huntdown-vita.zip), right-click it, choose **Extract All** and set the folder to `C:\huntdown`. You can also clone this repository there.
 
 3. Open `C:\huntdown` (or the clone's `huntdown-vita` folder), right-click in it, choose **Open in Terminal** (on Windows 10: Shift + right-click, **Open PowerShell window here**), and run:
 
