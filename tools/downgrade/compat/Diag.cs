@@ -84,6 +84,7 @@ namespace HuntCompat
             Guard("Phases", Phases.Install);  // -hunt-phases: the player loop's steps timed (Phases.cs)
             Guard("RewiredTrim", RewiredTrim.Install);  // -hunt-rewired: Rewired's keyboard and mouse (RewiredTrim.cs)
             Guard("SpriteBench", SpriteBench.Install);  // -hunt-sprite-bench: what a sprite costs (SpriteBench.cs)
+            Guard("AudioLog", AudioLog.Install);  // -hunt-audio-log <s>: the game's music and weapon sources (AudioLog.cs)
             // -hunt-load-priority low|belownormal|normal|high: the main thread's time per frame for finishing
             // asynchronous loads (Application.backgroundLoadingPriority; an experiment, the game's own unless given).
             Guard("LoadPriority", a =>
